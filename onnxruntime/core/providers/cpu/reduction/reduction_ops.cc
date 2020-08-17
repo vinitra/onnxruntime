@@ -130,11 +130,14 @@ REGISTER_UNARY_ELEMENTWISE_VERSIONED_KERNEL_INT64_ONLY(ReduceProd, 1, 10);
 REGISTER_UNARY_ELEMENTWISE_KERNEL_INT64_ONLY(ReduceProd, 11);
 
 REGISTER_UNARY_ELEMENTWISE_VERSIONED_KERNEL(ReduceSum, 1, 10);
-REGISTER_UNARY_ELEMENTWISE_KERNEL(ReduceSum, 11);
 REGISTER_UNARY_ELEMENTWISE_VERSIONED_KERNEL_INT64_ONLY(ReduceSum, 1, 10);
-REGISTER_UNARY_ELEMENTWISE_KERNEL_INT64_ONLY(ReduceSum, 11);
 REGISTER_UNARY_ELEMENTWISE_VERSIONED_KERNEL_DOUBLE_ONLY(ReduceSum, 1, 10);
+REGISTER_UNARY_ELEMENTWISE_KERNEL(ReduceSum, 11);
+REGISTER_UNARY_ELEMENTWISE_KERNEL_INT64_ONLY(ReduceSum, 11);
 REGISTER_UNARY_ELEMENTWISE_KERNEL_DOUBLE_ONLY(ReduceSum, 11);
+REGISTER_UNARY_ELEMENTWISE_KERNEL(ReduceSum, 13);
+REGISTER_UNARY_ELEMENTWISE_KERNEL_INT64_ONLY(ReduceSum, 13);
+REGISTER_UNARY_ELEMENTWISE_KERNEL_DOUBLE_ONLY(ReduceSum, 13);
 
 REGISTER_UNARY_ELEMENTWISE_VERSIONED_KERNEL(ReduceSumSquare, 1, 10);
 REGISTER_UNARY_ELEMENTWISE_KERNEL(ReduceSumSquare, 11);
@@ -638,8 +641,30 @@ Status ReduceSum<T>::Compute(OpKernelContext* ctx) const {
   int64_t blocks;
   std::vector<int64_t> reduced_dims;
   const Tensor* input = ctx->Input<Tensor>(0);
+  std::vector<int64_t> axes;
 
-  bool no_transpose = PrepareForReduce<T>(input, transposed_input_data, block_size, blocks, axes_, keepdims_, reduced_dims, true);
+  size_t num_inputs = ctx->InputCount();
+  if (num_inputs == 2) {
+    //override the attribute value with the input value for reduction_axes
+    const Tensor* axes_tensor = ctx->Input<Tensor>(1);
+    ORT_ENFORCE(axes_tensor != nullptr, "Axes input is null");
+    ORT_ENFORCE(axes_tensor->Shape().NumDimensions() == 1,
+                "An axes tensor must be a vector tensor.");
+    auto nDims = static_cast<size_t>(axes_tensor->Shape()[0]);
+    const auto* data = axes_tensor->template Data<int64_t>();
+    axes.assign(data, data + nDims);
+  } else {
+    axes.assign(axes_.begin(), axes_.end());
+  }
+
+  // empty axes and no-op
+  if (axes.empty() && noop_with_empty_axes_) {
+    auto* output = ctx->Output(0, input->Shape());
+    memcpy(output->template MutableData<T>(), input->template Data<T>(), input->SizeInBytes());
+    return Status::OK();
+  }
+
+  bool no_transpose = PrepareForReduce<T>(input, transposed_input_data, block_size, blocks, axes, keepdims_, reduced_dims, true);
 
   auto* output = ctx->Output(0, reduced_dims);
 
