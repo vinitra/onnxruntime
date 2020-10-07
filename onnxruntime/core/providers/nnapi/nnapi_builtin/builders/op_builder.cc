@@ -2188,11 +2188,24 @@ Status GemmOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
 #pragma region op_unary
 
 class UnaryOpBuilder : public BaseOpBuilder {
+ public:
+  void AddInitializersToSkip(ModelBuilder& model_builder, const Node& node) override;
+
  private:
   int32_t GetMinSupportedSdkVer(ModelBuilder& model_builder, const Node& node) const override;
-
+  bool IsOpSupportedImpl(ModelBuilder& model_builder, const Node& node) override;
   Status AddToModelBuilderImpl(ModelBuilder& model_builder, const Node& node) override ORT_MUST_USE_RESULT;
 };
+
+void UnaryOpBuilder::AddInitializersToSkip(ModelBuilder& model_builder, const Node& node) {
+  if (node.OpType() == "Clip") {
+    if (node.InputDefs().size() > 1)
+      model_builder.AddInitializerToSkip(node.InputDefs()[1]->Name());  // min
+
+    if (node.InputDefs().size() > 2)
+      model_builder.AddInitializerToSkip(node.InputDefs()[2]->Name());  // max
+  }
+}
 
 int32_t UnaryOpBuilder::GetMinSupportedSdkVer(ModelBuilder& /* model_builder */, const Node& node) const {
   const auto& op(node.OpType());
@@ -2206,6 +2219,46 @@ int32_t UnaryOpBuilder::GetMinSupportedSdkVer(ModelBuilder& /* model_builder */,
   }
 
   return 27;
+}
+
+bool UnaryOpBuilder::IsOpSupportedImpl(ModelBuilder& model_builder, const Node& node) {
+  if (node.OpType() == "Clip") {
+    float min = std::numeric_limits<float>::lowest();
+    float max = std::numeric_limits<float>::max();
+
+    const auto& initializers(model_builder.GetInitializerTensors());
+
+    // we have input min
+    if (node.InputDefs().size() > 1) {
+      const auto& min_name = node.InputDefs()[1]->Name();
+      if (!Contains(initializers, min_name)) {
+        LOGS_DEFAULT(VERBOSE) << "Input min of Clip must be known";
+        return false;
+      }
+      min = GetTensorFloatData(initializers.at(min_name))[0];
+    }
+
+    // we have input max
+    if (node.InputDefs().size() > 2) {
+      const auto& max_name = node.InputDefs()[2]->Name();
+      if (!Contains(initializers, max_name)) {
+        LOGS_DEFAULT(VERBOSE) << "Input max of Clip must be known";
+        return false;
+      }
+      max = GetTensorFloatData(initializers.at(max_name))[0];
+    }
+
+    // We only supoort relu6
+    if (min == 0.0f && max == 6.0f) {
+      return true;
+    } else {
+      LOGS_DEFAULT(VERBOSE) << "Clip only supports range [min, max] = [0, 6], the input range is ["
+                            << min << ", " << max << "]";
+      return false;
+    }
+  }
+
+  return true;
 }
 
 Status UnaryOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const Node& node) {
@@ -2240,7 +2293,9 @@ Status UnaryOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const 
     op_code = ANEURALNETWORKS_SQRT;
   else if (op_type == "Tanh")
     op_code = ANEURALNETWORKS_TANH;
-  else {
+  else if (op_type == "Clip") {
+    op_code = ANEURALNETWORKS_RELU6;
+  } else {
     return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "UnaryOpBuilder, unknown op: ", op_type);
   }
   std::vector<uint32_t> input_indices;
@@ -2729,6 +2784,7 @@ CreateOpBuilders() {
     op_map.emplace("Sin", unary_op_builder);
     op_map.emplace("Sqrt", unary_op_builder);
     op_map.emplace("Tanh", unary_op_builder);
+    op_map.emplace("Clip", unary_op_builder);
   }
 
   op_map.emplace("Concat", std::make_shared<ConcatOpBuilder>());
