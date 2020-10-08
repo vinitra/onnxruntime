@@ -2549,8 +2549,6 @@ Status QuantizeLinearOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builde
     ORT_RETURN_IF_ERROR(GetQuantizationZeroPoint(model_builder, node, 2, zero_point));
   }
 
-  LOGS_DEFAULT(VERBOSE) << "scale: " << scale << " zp: " << zero_point;
-
   ORT_RETURN_IF_ERROR(shaper.Identity(input, output));
   const OperandType output_operand_type(output_type, shaper[output], scale, zero_point);
   std::vector<uint32_t> input_indices;
@@ -2729,6 +2727,210 @@ Status LRNOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const No
 
 #pragma endregion
 
+#pragma region op_Resize
+
+class ResizeOpBuilder : public BaseOpBuilder {
+ public:
+  void AddInitializersToSkip(ModelBuilder& model_builder, const Node& node) override;
+
+ private:
+  bool IsOpSupportedImpl(ModelBuilder& model_builder, const Node& node) override;
+
+  int32_t GetMinSupportedSdkVer(ModelBuilder& /* model_builder */, const Node& node) const override;
+
+  Status AddToModelBuilderImpl(ModelBuilder& model_builder, const Node& node) override ORT_MUST_USE_RESULT;
+};
+
+int32_t ResizeOpBuilder::GetMinSupportedSdkVer(ModelBuilder& /* model_builder */, const Node& node) const {
+  NodeAttrHelper helper(node);
+  if (helper.Get("mode", "nearest") == "nearest")
+    return 29;
+
+  return 27;
+}
+
+void ResizeOpBuilder::AddInitializersToSkip(ModelBuilder& model_builder, const Node& node) {
+  model_builder.AddInitializerToSkip(node.InputDefs()[2]->Name());  // scales
+
+  if (node.InputDefs().size() > 3)
+    model_builder.AddInitializerToSkip(node.InputDefs()[3]->Name());  // sizes
+}
+
+bool ResizeOpBuilder::IsOpSupportedImpl(ModelBuilder& model_builder, const Node& node) {
+  if (node.SinceVersion() < 11) {
+    LOGS_DEFAULT(VERBOSE) << "Resize only supports opset 11+";
+    return false;
+  }
+
+  Shape input_shape;
+  if (!GetShape(*node.InputDefs()[0], input_shape))
+    return false;
+
+  const auto input_size = input_shape.size();
+  if (input_size != 4) {
+    LOGS_DEFAULT(VERBOSE) << "Resize only support 4d shape, input is "
+                          << input_size << "d shape";
+    return false;
+  }
+
+  {  // check attributes
+    const auto android_skd_ver = model_builder.GetAndroidSdkVer();
+
+    NodeAttrHelper helper(node);
+    const auto mode = helper.Get("mode", "nearest");
+    bool using_nearest = mode == "nearest";
+    if (mode != "linear" && !using_nearest) {
+      LOGS_DEFAULT(VERBOSE) << "Resize only support linear and nearest mode for now, input mode is " << mode;
+      return false;
+    }
+
+    const auto coord_trans_mode = helper.Get("coordinate_transformation_mode", "half_pixel");
+    bool using_half_pixel = coord_trans_mode == "half_pixel";
+    bool using_tf_half_pixel_for_nn = coord_trans_mode == "tf_half_pixel_for_nn";
+    bool using_align_corners = coord_trans_mode == "align_corners";
+    if (!using_half_pixel &&
+        !using_tf_half_pixel_for_nn &&
+        !using_align_corners &&
+        coord_trans_mode != "asymmetric") {
+      LOGS_DEFAULT(VERBOSE) << "Resize, unsupported coord_trans_mode, " << coord_trans_mode;
+      return false;
+    }
+
+    if ((using_half_pixel || using_tf_half_pixel_for_nn || using_align_corners) &&
+        android_skd_ver < 30) {
+      LOGS_DEFAULT(VERBOSE) << "Resize only support half_pixel/align_corners on API level 30+, current API level is "
+                            << android_skd_ver;
+      return false;
+    }
+
+    const auto exclude_outside = helper.Get("exclude_outside", 0);
+    if (exclude_outside != 0) {
+      LOGS_DEFAULT(VERBOSE) << "Resize does not support exclude_outside for now";
+      return false;
+    }
+
+    // for nearest neighbour using NNAPI
+    // if we use tf_half_pixel_for_nn, then nearest_mode should be round_prefer_floor
+    // if we use half_pixel, then nearest_mode shouyld be round_prefer_ceil
+    if (using_nearest) {
+      const auto nearest_mode = helper.Get("nearest_mode", "round_prefer_floor");
+      if ((using_half_pixel && nearest_mode != "round_prefer_ceil") ||
+          (using_tf_half_pixel_for_nn && nearest_mode != "round_prefer_floor")) {
+        LOGS_DEFAULT(VERBOSE) << "Resize unsupported nearest_mode, " << nearest_mode;
+        return false;
+      }
+    }
+  }
+
+  {  // scales and sizes (if present) must be initializers
+    const auto& initializers(model_builder.GetInitializerTensors());
+    // scales
+    if (node.InputDefs().size() < 3 || !Contains(initializers, node.InputDefs()[2]->Name())) {
+      LOGS_DEFAULT(VERBOSE) << "Input scales of Resize must be known";
+      return false;
+    }
+
+    // sizes
+    if (node.InputDefs().size() > 3 && !Contains(initializers, node.InputDefs()[3]->Name())) {
+      LOGS_DEFAULT(VERBOSE) << "Input sizes of Resize must be known";
+      return false;
+    }
+  }
+  return true;
+}
+
+Status ResizeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const Node& node) {
+  auto& shaper(model_builder.GetShaper());
+  const auto& operand_indices(model_builder.GetOperandIndices());
+  const auto& operand_types(model_builder.GetOperandTypes());
+  const auto& initializers(model_builder.GetInitializerTensors());
+  NodeAttrHelper helper(node);
+  const auto input_defs = node.InputDefs();
+  const auto android_skd_ver = model_builder.GetAndroidSdkVer();
+  const auto& output = node.OutputDefs()[0]->Name();
+
+  auto input = input_defs[0]->Name();
+  bool use_nchw = model_builder.UseNCHW();
+  bool input_is_nhwc = model_builder.IsOperandNHWC(input);
+  bool output_is_nhwc = false;
+  if (use_nchw) {
+    ORT_RETURN_IF_NOT(!input_is_nhwc, "model_builder.UseNCHW() but input is NHWC");
+  } else {
+    output_is_nhwc = true;
+    if (!input_is_nhwc) {
+      const auto& nchw_input = input_defs[0]->Name();
+      if (!model_builder.GetNHWCOperand(nchw_input, input)) {
+        input = model_builder.GetUniqueName(nchw_input + "_nchw_to_nhwc");
+        ORT_RETURN_IF_ERROR(TransposeNCHWToNHWC(model_builder, nchw_input, input));
+      }
+    }
+  }
+
+  int32_t operationCode = ANEURALNETWORKS_RESIZE_NEAREST_NEIGHBOR;
+  const auto mode = helper.Get("mode", "nearest");
+  if (mode == "linear")
+    operationCode = ANEURALNETWORKS_RESIZE_BILINEAR;
+
+  const auto coord_trans_mode = helper.Get("coordinate_transformation_mode", "half_pixel");
+  bool using_half_pixel = (coord_trans_mode == "half_pixel") || (coord_trans_mode == "tf_half_pixel_for_nn");
+  bool using_align_corners = coord_trans_mode == "align_corners";
+
+  bool using_scales = node.InputDefs().size() == 3;
+  float scale_h = 0.0f;
+  float scale_w = 0.0f;
+  if (using_scales) {  // we are using scales
+    const auto& scales_name = input_defs[2]->Name();
+    const auto& scales_tensor = initializers.at(scales_name);
+    const float* scales_data = GetTensorFloatData(scales_tensor);
+    scale_h = scales_data[2];
+    scale_w = scales_data[3];
+
+    // removed this
+    LOGS_DEFAULT(VERBOSE) << "scales h " << scale_h << " scales w " << scale_w;
+    ORT_RETURN_IF_ERROR(shaper.ResizeUsingScales(input, scale_h, scale_w, use_nchw, output));
+  } else {  // we are using sizes
+    const auto& sizes_name = input_defs[3]->Name();
+    const auto& sizes_tensor = initializers.at(sizes_name);
+    const int64_t* sizes_data = GetTensorInt64Data(sizes_tensor);
+    ORT_RETURN_IF_ERROR(
+        shaper.ResizeUsingOutputSizes(input, SafeInt<int32_t>(sizes_data[2]), SafeInt<int32_t>(sizes_data[3]), use_nchw, output));
+  }
+
+  const auto& output_shape = shaper[output];
+  int32_t output_h = use_nchw ? output_shape[2] : output_shape[1];
+  int32_t output_w = use_nchw ? output_shape[3] : output_shape[2];
+
+  std::vector<uint32_t> input_indices;
+  input_indices.push_back(operand_indices.at(input));
+  if (android_skd_ver > 28 && using_scales) {
+    // Using scales as input is only available on API level 29
+    ADD_SCALAR_OPERAND(model_builder, input_indices, scale_w);
+    ADD_SCALAR_OPERAND(model_builder, input_indices, scale_h);
+  } else {
+    ADD_SCALAR_OPERAND(model_builder, input_indices, output_w);
+    ADD_SCALAR_OPERAND(model_builder, input_indices, output_h);
+  }
+
+  if (android_skd_ver > 28) {
+    // using nchw is only available on API level 29
+    ADD_SCALAR_OPERAND(model_builder, input_indices, use_nchw);
+  }
+
+  if (android_skd_ver > 29 && (using_align_corners || using_half_pixel)) {
+    ADD_SCALAR_OPERAND(model_builder, input_indices, using_align_corners);
+    if (using_half_pixel)
+      ADD_SCALAR_OPERAND(model_builder, input_indices, using_half_pixel);
+  }
+
+  const OperandType output_operand_type(operand_types.at(input).type, output_shape);
+  ORT_RETURN_IF_ERROR(model_builder.AddOperation(operationCode, input_indices,
+                                                 {output}, {output_operand_type}, {output_is_nhwc}));
+
+  return Status::OK();
+}
+
+#pragma endregion
+
 #pragma region CreateOpBuilders
 
 std::unordered_map<std::string, std::shared_ptr<IOpBuilder>>
@@ -2792,6 +2994,7 @@ CreateOpBuilders() {
   op_map.emplace("QuantizeLinear", std::make_shared<QuantizeLinearOpBuilder>());
   op_map.emplace("DequantizeLinear", std::make_shared<DequantizeLinearOpBuilder>());
   op_map.emplace("LRN", std::make_shared<LRNOpBuilder>());
+  op_map.emplace("Resize", std::make_shared<ResizeOpBuilder>());
 
   return op_map;
 }
