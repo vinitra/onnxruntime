@@ -32,7 +32,7 @@ struct OrtStatus {
   char msg[1];  // a null-terminated string
 };
 
-#if defined(USE_CUDA) || defined(USE_HIP)
+#if defined(USE_CUDA) || defined(USE_ROCM)
 #define BACKEND_PROC "GPU"
 #else
 #define BACKEND_PROC "CPU"
@@ -135,12 +135,12 @@ struct OrtStatus {
 #include "core/providers/cpu/cpu_execution_provider.h"
 #include "core/providers/cpu/cpu_provider_factory.h"
 
-#if defined(USE_CUDA) || defined(USE_HIP)
+#if defined(USE_CUDA) || defined(USE_ROCM)
 #ifdef USE_CUDA
 #include "core/providers/cuda/cuda_provider_factory.h"
 #include "core/providers/cuda/shared_inc/cuda_call.h"
 #include "core/providers/cuda/cuda_provider_options.h"
-#elif USE_HIP
+#elif USE_ROCM
 #include "core/providers/hip/hip_provider_factory.h"
 #endif
 OrtDevice::DeviceId cuda_device_id = 0;
@@ -184,7 +184,7 @@ std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_CPU(in
 std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_CUDA(OrtDevice::DeviceId device_id,
                                                                                size_t cuda_mem_limit,
                                                                                onnxruntime::ArenaExtendStrategy arena_extend_strategy);
-std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_HIP(OrtDevice::DeviceId device_id,
+std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_ROCM(OrtDevice::DeviceId device_id,
                                                                                size_t cuda_mem_limit,
                                                                                onnxruntime::ArenaExtendStrategy arena_extend_strategy);
 std::shared_ptr<IExecutionProviderFactory> CreateExecutionProviderFactory_Tensorrt(int device_id);
@@ -395,7 +395,7 @@ inline void RegisterExecutionProvider(InferenceSession* sess, onnxruntime::IExec
 // ordered by default priority from highest to lowest. kCpuExecutionProvider should always be last.
 const std::vector<std::string>& GetAllProviders() {
   static std::vector<std::string> all_providers = {kTensorrtExecutionProvider, kCudaExecutionProvider,
-                                                   kMIGraphXExecutionProvider, kHipExecutionProvider,
+                                                   kMIGraphXExecutionProvider, kRocmExecutionProvider,
                                                    kNGraphExecutionProvider, kOpenVINOExecutionProvider, kDnnlExecutionProvider,
                                                    kNupharExecutionProvider, kVitisAIExecutionProvider, kArmNNExecutionProvider,
                                                    kAclExecutionProvider, kDmlExecutionProvider, kCpuExecutionProvider};
@@ -559,8 +559,8 @@ void RegisterExecutionProviders(InferenceSession* sess, const std::vector<std::s
                                                                     arena_extend_strategy));
       }
 #endif
-    } else if (type == kHipExecutionProvider) {
-#ifdef USE_HIP
+    } else if (type == kRocmExecutionProvider) {
+#ifdef USE_ROCM
 
       // auto it = provider_options_map.find(type);
       // if (it != provider_options_map.end()) {
@@ -573,7 +573,7 @@ void RegisterExecutionProviders(InferenceSession* sess, const std::vector<std::s
       //                                                               cuda_provider_options.arena_extend_strategy));
       // } else {
         RegisterExecutionProvider(
-            sess, *onnxruntime::CreateExecutionProviderFactory_HIP(cuda_device_id,
+            sess, *onnxruntime::CreateExecutionProviderFactory_ROCM(cuda_device_id,
                                                                     cuda_mem_limit,
                                                                     arena_extend_strategy));
       // }
@@ -778,8 +778,8 @@ void addGlobalMethods(py::module& m, const Environment& env) {
 #ifdef USE_CUDA
             onnxruntime::CreateExecutionProviderFactory_CUDA(cuda_device_id, cuda_mem_limit, arena_extend_strategy),
 #endif
-#ifdef USE_HIP
-            onnxruntime::CreateExecutionProviderFactory_HIP(cuda_device_id, cuda_mem_limit, arena_extend_strategy),
+#ifdef USE_ROCM
+            onnxruntime::CreateExecutionProviderFactory_ROCM(cuda_device_id, cuda_mem_limit, arena_extend_strategy),
 #endif
 #ifdef USE_DNNL
             onnxruntime::CreateExecutionProviderFactory_Dnnl(1),
@@ -823,7 +823,7 @@ void addGlobalMethods(py::module& m, const Environment& env) {
       "Return a vector of KernelDef for all registered OpKernels");
 #endif  //onnxruntime_PYBIND_EXPORT_OPSCHEMA
 
-#if defined(USE_CUDA) || defined(USE_HIP)
+#if defined(USE_CUDA) || defined(USE_ROCM)
   /*
    * The following set_* methods are deprecated.
    *
