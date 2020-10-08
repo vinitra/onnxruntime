@@ -2778,26 +2778,20 @@ bool ResizeOpBuilder::IsOpSupportedImpl(ModelBuilder& model_builder, const Node&
 
     NodeAttrHelper helper(node);
     const auto mode = helper.Get("mode", "nearest");
-    bool using_nearest = mode == "nearest";
-    if (mode != "linear" && !using_nearest) {
-      LOGS_DEFAULT(VERBOSE) << "Resize only support linear and nearest mode for now, input mode is " << mode;
+    if (mode != "linear") {
+      LOGS_DEFAULT(VERBOSE) << "Resize unsupported input mode, " << mode;
       return false;
     }
 
     const auto coord_trans_mode = helper.Get("coordinate_transformation_mode", "half_pixel");
     bool using_half_pixel = coord_trans_mode == "half_pixel";
-    bool using_tf_half_pixel_for_nn = coord_trans_mode == "tf_half_pixel_for_nn";
     bool using_align_corners = coord_trans_mode == "align_corners";
-    if (!using_half_pixel &&
-        !using_tf_half_pixel_for_nn &&
-        !using_align_corners &&
-        coord_trans_mode != "asymmetric") {
+    if (!using_half_pixel && !using_align_corners && coord_trans_mode != "asymmetric") {
       LOGS_DEFAULT(VERBOSE) << "Resize, unsupported coord_trans_mode, " << coord_trans_mode;
       return false;
     }
 
-    if ((using_half_pixel || using_tf_half_pixel_for_nn || using_align_corners) &&
-        android_skd_ver < 30) {
+    if (android_skd_ver < 30 && (using_half_pixel || using_align_corners)) {
       LOGS_DEFAULT(VERBOSE) << "Resize only support half_pixel/align_corners on API level 30+, current API level is "
                             << android_skd_ver;
       return false;
@@ -2807,18 +2801,6 @@ bool ResizeOpBuilder::IsOpSupportedImpl(ModelBuilder& model_builder, const Node&
     if (exclude_outside != 0) {
       LOGS_DEFAULT(VERBOSE) << "Resize does not support exclude_outside for now";
       return false;
-    }
-
-    // for nearest neighbour using NNAPI
-    // if we use tf_half_pixel_for_nn, then nearest_mode should be round_prefer_floor
-    // if we use half_pixel, then nearest_mode shouyld be round_prefer_ceil
-    if (using_nearest) {
-      const auto nearest_mode = helper.Get("nearest_mode", "round_prefer_floor");
-      if ((using_half_pixel && nearest_mode != "round_prefer_ceil") ||
-          (using_tf_half_pixel_for_nn && nearest_mode != "round_prefer_floor")) {
-        LOGS_DEFAULT(VERBOSE) << "Resize unsupported nearest_mode, " << nearest_mode;
-        return false;
-      }
     }
   }
 
@@ -2866,13 +2848,11 @@ Status ResizeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const
     }
   }
 
-  int32_t operationCode = ANEURALNETWORKS_RESIZE_NEAREST_NEIGHBOR;
-  const auto mode = helper.Get("mode", "nearest");
-  if (mode == "linear")
-    operationCode = ANEURALNETWORKS_RESIZE_BILINEAR;
+  // TODO, add support for nearest neighbor
+  int32_t operationCode = ANEURALNETWORKS_RESIZE_BILINEAR;
 
   const auto coord_trans_mode = helper.Get("coordinate_transformation_mode", "half_pixel");
-  bool using_half_pixel = (coord_trans_mode == "half_pixel") || (coord_trans_mode == "tf_half_pixel_for_nn");
+  bool using_half_pixel = coord_trans_mode == "half_pixel";
   bool using_align_corners = coord_trans_mode == "align_corners";
 
   bool using_scales = node.InputDefs().size() == 3;
@@ -2884,10 +2864,8 @@ Status ResizeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const
     const float* scales_data = GetTensorFloatData(scales_tensor);
     scale_h = scales_data[2];
     scale_w = scales_data[3];
-
-    // removed this
-    LOGS_DEFAULT(VERBOSE) << "scales h " << scale_h << " scales w " << scale_w;
-    ORT_RETURN_IF_ERROR(shaper.ResizeUsingScales(input, scale_h, scale_w, use_nchw, output));
+    ORT_RETURN_IF_ERROR(
+        shaper.ResizeUsingScales(input, scale_h, scale_w, use_nchw, output));
   } else {  // we are using sizes
     const auto& sizes_name = input_defs[3]->Name();
     const auto& sizes_tensor = initializers.at(sizes_name);
