@@ -137,7 +137,7 @@ TEST(MathOpTest, Clip) {
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kNGraphExecutionProvider, kTensorrtExecutionProvider});
 }
 
-// Use clip between [0,6] as Relu6
+// Use clip between [0, 6] as Relu6
 TEST(MathOpTest, Clip_Relu6) {
   OpTester test("Clip", 11);
 
@@ -152,6 +152,26 @@ TEST(MathOpTest, Clip_Relu6) {
                         {0.0f, 0.0f, 1.0f,
                          0.0f, 3.5f, 6.0f,
                          0.0f, 2.0f, 6.0f});
+
+  // TensorRT, nGraph and Tensorrt does not support Clip opset 11 yet.
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kNGraphExecutionProvider, kTensorrtExecutionProvider});
+}
+
+// Use clip between [-1, 1] as Relu1
+TEST(MathOpTest, Clip_Relu1) {
+  OpTester test("Clip", 11);
+
+  std::vector<int64_t> dims{3, 3};
+  test.AddInput<float>("X", dims,
+                       {-1.0f, 0.0f, 1.0f,
+                        -6.0f, 3.5f, 6.0f,
+                        -5.4f, 2.0f, 8.0f});
+  test.AddInput<float>("min", {}, {-1.0f}, true);
+  test.AddInput<float>("max", {}, {1.0f}, true);
+  test.AddOutput<float>("Y", dims,
+                        {-1.0f, 0.0f, 1.0f,
+                         -1.0f, 1.0f, 1.0f,
+                         -1.0f, 1.0f, 1.0f});
 
   // TensorRT, nGraph and Tensorrt does not support Clip opset 11 yet.
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kNGraphExecutionProvider, kTensorrtExecutionProvider});
