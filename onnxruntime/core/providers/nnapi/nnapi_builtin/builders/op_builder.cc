@@ -2792,7 +2792,7 @@ int32_t ResizeOpBuilder::GetMinSupportedSdkVer(ModelBuilder& /* model_builder */
   if (helper.Get("mode", "nearest") == "nearest")
     return 29;
 
-  return 27;
+  return 28;
 }
 
 void ResizeOpBuilder::AddInitializersToSkip(ModelBuilder& model_builder, const Node& node) {
