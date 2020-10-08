@@ -2901,10 +2901,9 @@ Status ResizeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const
   bool using_half_pixel = coord_trans_mode == "half_pixel";
   bool using_align_corners = coord_trans_mode == "align_corners";
 
-  bool using_scales = node.InputDefs().size() == 3;
   float scale_h = 0.0f;
   float scale_w = 0.0f;
-  if (using_scales) {  // we are using scales
+  if (node.InputDefs().size() == 3) {  // we are using scales
     const auto& scales_name = input_defs[2]->Name();
     const auto& scales_tensor = initializers.at(scales_name);
     const float* scales_data = GetTensorFloatData(scales_tensor);
@@ -2926,14 +2925,8 @@ Status ResizeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const
 
   std::vector<uint32_t> input_indices;
   input_indices.push_back(operand_indices.at(input));
-  if (android_skd_ver > 28 && using_scales) {
-    // Using scales as input is only available on API level 29
-    ADD_SCALAR_OPERAND(model_builder, input_indices, scale_w);
-    ADD_SCALAR_OPERAND(model_builder, input_indices, scale_h);
-  } else {
-    ADD_SCALAR_OPERAND(model_builder, input_indices, output_w);
-    ADD_SCALAR_OPERAND(model_builder, input_indices, output_h);
-  }
+  ADD_SCALAR_OPERAND(model_builder, input_indices, output_w);
+  ADD_SCALAR_OPERAND(model_builder, input_indices, output_h);
 
   if (android_skd_ver > 28) {
     // using nchw is only available on API level 29
