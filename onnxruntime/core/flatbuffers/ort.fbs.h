@@ -332,10 +332,8 @@ FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) EdgeEnd FLATBUFFERS_FINAL_CLASS {
   int32_t dst_arg_index_;
 
  public:
-  EdgeEnd()
-      : node_index_(0),
-        src_arg_index_(0),
-        dst_arg_index_(0) {
+  EdgeEnd() {
+    memset(static_cast<void *>(this), 0, sizeof(EdgeEnd));
   }
   EdgeEnd(uint32_t _node_index, int32_t _src_arg_index, int32_t _dst_arg_index)
       : node_index_(flatbuffers::EndianScalar(_node_index)),
@@ -382,6 +380,7 @@ struct ShapeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  ShapeBuilder &operator=(const ShapeBuilder &);
   flatbuffers::Offset<Shape> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Shape>(end);
@@ -442,6 +441,7 @@ struct DimensionBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  DimensionBuilder &operator=(const DimensionBuilder &);
   flatbuffers::Offset<Dimension> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Dimension>(end);
@@ -513,6 +513,7 @@ struct DimensionValueBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  DimensionValueBuilder &operator=(const DimensionValueBuilder &);
   flatbuffers::Offset<DimensionValue> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<DimensionValue>(end);
@@ -580,6 +581,7 @@ struct TensorTypeAndShapeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  TensorTypeAndShapeBuilder &operator=(const TensorTypeAndShapeBuilder &);
   flatbuffers::Offset<TensorTypeAndShape> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<TensorTypeAndShape>(end);
@@ -632,6 +634,7 @@ struct MapTypeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  MapTypeBuilder &operator=(const MapTypeBuilder &);
   flatbuffers::Offset<MapType> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<MapType>(end);
@@ -676,6 +679,7 @@ struct SequenceTypeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  SequenceTypeBuilder &operator=(const SequenceTypeBuilder &);
   flatbuffers::Offset<SequenceType> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<SequenceType>(end);
@@ -735,6 +739,7 @@ struct NodeEdgeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  NodeEdgeBuilder &operator=(const NodeEdgeBuilder &);
   flatbuffers::Offset<NodeEdge> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<NodeEdge>(end);
@@ -904,6 +909,7 @@ struct NodeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  NodeBuilder &operator=(const NodeBuilder &);
   flatbuffers::Offset<Node> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Node>(end);
@@ -1030,6 +1036,7 @@ struct ValueInfoBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  ValueInfoBuilder &operator=(const ValueInfoBuilder &);
   flatbuffers::Offset<ValueInfo> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<ValueInfo>(end);
@@ -1129,6 +1136,7 @@ struct TypeInfoBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  TypeInfoBuilder &operator=(const TypeInfoBuilder &);
   flatbuffers::Offset<TypeInfo> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<TypeInfo>(end);
@@ -1196,6 +1204,7 @@ struct OperatorSetIdBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  OperatorSetIdBuilder &operator=(const OperatorSetIdBuilder &);
   flatbuffers::Offset<OperatorSetId> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<OperatorSetId>(end);
@@ -1296,6 +1305,7 @@ struct TensorBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  TensorBuilder &operator=(const TensorBuilder &);
   flatbuffers::Offset<Tensor> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Tensor>(end);
@@ -1479,6 +1489,7 @@ struct AttributeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  AttributeBuilder &operator=(const AttributeBuilder &);
   flatbuffers::Offset<Attribute> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Attribute>(end);
@@ -1644,6 +1655,7 @@ struct GraphBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  GraphBuilder &operator=(const GraphBuilder &);
   flatbuffers::Offset<Graph> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Graph>(end);
@@ -1786,6 +1798,7 @@ struct ModelBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  ModelBuilder &operator=(const ModelBuilder &);
   flatbuffers::Offset<Model> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Model>(end);
@@ -1878,6 +1891,7 @@ struct KernelCreateInfosBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  KernelCreateInfosBuilder &operator=(const KernelCreateInfosBuilder &);
   flatbuffers::Offset<KernelCreateInfos> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<KernelCreateInfos>(end);
@@ -1949,6 +1963,7 @@ struct SubGraphSessionStateBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  SubGraphSessionStateBuilder &operator=(const SubGraphSessionStateBuilder &);
   flatbuffers::Offset<SubGraphSessionState> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<SubGraphSessionState>(end);
@@ -2015,6 +2030,7 @@ struct SessionStateBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  SessionStateBuilder &operator=(const SessionStateBuilder &);
   flatbuffers::Offset<SessionState> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<SessionState>(end);
@@ -2088,6 +2104,7 @@ struct InferenceSessionBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  InferenceSessionBuilder &operator=(const InferenceSessionBuilder &);
   flatbuffers::Offset<InferenceSession> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<InferenceSession>(end);
