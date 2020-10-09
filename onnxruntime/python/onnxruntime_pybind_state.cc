@@ -141,7 +141,7 @@ struct OrtStatus {
 #include "core/providers/cuda/shared_inc/cuda_call.h"
 #include "core/providers/cuda/cuda_provider_options.h"
 #elif USE_ROCM
-#include "core/providers/rocm/hip_provider_factory.h"
+#include "core/providers/rocm/rocm_provider_factory.h"
 #endif
 OrtDevice::DeviceId cuda_device_id = 0;
 size_t cuda_mem_limit = std::numeric_limits<size_t>::max();
