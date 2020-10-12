@@ -28,6 +28,9 @@ struct MapTypeBuilder;
 struct SequenceType;
 struct SequenceTypeBuilder;
 
+struct SparseTensorType;
+struct SparseTensorTypeBuilder;
+
 struct EdgeEnd;
 
 struct NodeEdge;
@@ -47,6 +50,9 @@ struct OperatorSetIdBuilder;
 
 struct Tensor;
 struct TensorBuilder;
+
+struct SparseTensor;
+struct SparseTensorBuilder;
 
 struct Attribute;
 struct AttributeBuilder;
@@ -275,33 +281,36 @@ enum class TypeInfoValue : uint8_t {
   tensor_type = 1,
   sequence_type = 2,
   map_type = 3,
+  sparse_tensor_type = 4,
   MIN = NONE,
-  MAX = map_type
+  MAX = sparse_tensor_type
 };
 
-inline const TypeInfoValue (&EnumValuesTypeInfoValue())[4] {
+inline const TypeInfoValue (&EnumValuesTypeInfoValue())[5] {
   static const TypeInfoValue values[] = {
     TypeInfoValue::NONE,
     TypeInfoValue::tensor_type,
     TypeInfoValue::sequence_type,
-    TypeInfoValue::map_type
+    TypeInfoValue::map_type,
+    TypeInfoValue::sparse_tensor_type
   };
   return values;
 }
 
 inline const char * const *EnumNamesTypeInfoValue() {
-  static const char * const names[5] = {
+  static const char * const names[6] = {
     "NONE",
     "tensor_type",
     "sequence_type",
     "map_type",
+    "sparse_tensor_type",
     nullptr
   };
   return names;
 }
 
 inline const char *EnumNameTypeInfoValue(TypeInfoValue e) {
-  if (flatbuffers::IsOutRange(e, TypeInfoValue::NONE, TypeInfoValue::map_type)) return "";
+  if (flatbuffers::IsOutRange(e, TypeInfoValue::NONE, TypeInfoValue::sparse_tensor_type)) return "";
   const size_t index = static_cast<size_t>(e);
   return EnumNamesTypeInfoValue()[index];
 }
@@ -322,6 +331,10 @@ template<> struct TypeInfoValueTraits<onnxruntime::experimental::fbs::MapType> {
   static const TypeInfoValue enum_value = TypeInfoValue::map_type;
 };
 
+template<> struct TypeInfoValueTraits<onnxruntime::experimental::fbs::SparseTensorType> {
+  static const TypeInfoValue enum_value = TypeInfoValue::sparse_tensor_type;
+};
+
 bool VerifyTypeInfoValue(flatbuffers::Verifier &verifier, const void *obj, TypeInfoValue type);
 bool VerifyTypeInfoValueVector(flatbuffers::Verifier &verifier, const flatbuffers::Vector<flatbuffers::Offset<void>> *values, const flatbuffers::Vector<uint8_t> *types);
 
@@ -332,10 +345,8 @@ FLATBUFFERS_MANUALLY_ALIGNED_STRUCT(4) EdgeEnd FLATBUFFERS_FINAL_CLASS {
   int32_t dst_arg_index_;
 
  public:
-  EdgeEnd()
-      : node_index_(0),
-        src_arg_index_(0),
-        dst_arg_index_(0) {
+  EdgeEnd() {
+    memset(static_cast<void *>(this), 0, sizeof(EdgeEnd));
   }
   EdgeEnd(uint32_t _node_index, int32_t _src_arg_index, int32_t _dst_arg_index)
       : node_index_(flatbuffers::EndianScalar(_node_index)),
@@ -382,6 +393,7 @@ struct ShapeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  ShapeBuilder &operator=(const ShapeBuilder &);
   flatbuffers::Offset<Shape> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Shape>(end);
@@ -442,6 +454,7 @@ struct DimensionBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  DimensionBuilder &operator=(const DimensionBuilder &);
   flatbuffers::Offset<Dimension> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Dimension>(end);
@@ -513,6 +526,7 @@ struct DimensionValueBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  DimensionValueBuilder &operator=(const DimensionValueBuilder &);
   flatbuffers::Offset<DimensionValue> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<DimensionValue>(end);
@@ -580,6 +594,7 @@ struct TensorTypeAndShapeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  TensorTypeAndShapeBuilder &operator=(const TensorTypeAndShapeBuilder &);
   flatbuffers::Offset<TensorTypeAndShape> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<TensorTypeAndShape>(end);
@@ -632,6 +647,7 @@ struct MapTypeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  MapTypeBuilder &operator=(const MapTypeBuilder &);
   flatbuffers::Offset<MapType> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<MapType>(end);
@@ -676,6 +692,7 @@ struct SequenceTypeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  SequenceTypeBuilder &operator=(const SequenceTypeBuilder &);
   flatbuffers::Offset<SequenceType> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<SequenceType>(end);
@@ -687,6 +704,59 @@ inline flatbuffers::Offset<SequenceType> CreateSequenceType(
     flatbuffers::FlatBufferBuilder &_fbb,
     flatbuffers::Offset<onnxruntime::experimental::fbs::TypeInfo> elem_type = 0) {
   SequenceTypeBuilder builder_(_fbb);
+  builder_.add_elem_type(elem_type);
+  return builder_.Finish();
+}
+
+struct SparseTensorType FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef SparseTensorTypeBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_ELEM_TYPE = 4,
+    VT_SHAPE = 6
+  };
+  onnxruntime::experimental::fbs::TensorDataType elem_type() const {
+    return static_cast<onnxruntime::experimental::fbs::TensorDataType>(GetField<int32_t>(VT_ELEM_TYPE, 0));
+  }
+  const onnxruntime::experimental::fbs::Shape *shape() const {
+    return GetPointer<const onnxruntime::experimental::fbs::Shape *>(VT_SHAPE);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyField<int32_t>(verifier, VT_ELEM_TYPE) &&
+           VerifyOffset(verifier, VT_SHAPE) &&
+           verifier.VerifyTable(shape()) &&
+           verifier.EndTable();
+  }
+};
+
+struct SparseTensorTypeBuilder {
+  typedef SparseTensorType Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_elem_type(onnxruntime::experimental::fbs::TensorDataType elem_type) {
+    fbb_.AddElement<int32_t>(SparseTensorType::VT_ELEM_TYPE, static_cast<int32_t>(elem_type), 0);
+  }
+  void add_shape(flatbuffers::Offset<onnxruntime::experimental::fbs::Shape> shape) {
+    fbb_.AddOffset(SparseTensorType::VT_SHAPE, shape);
+  }
+  explicit SparseTensorTypeBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  SparseTensorTypeBuilder &operator=(const SparseTensorTypeBuilder &);
+  flatbuffers::Offset<SparseTensorType> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<SparseTensorType>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<SparseTensorType> CreateSparseTensorType(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    onnxruntime::experimental::fbs::TensorDataType elem_type = onnxruntime::experimental::fbs::TensorDataType::UNDEFINED,
+    flatbuffers::Offset<onnxruntime::experimental::fbs::Shape> shape = 0) {
+  SparseTensorTypeBuilder builder_(_fbb);
+  builder_.add_shape(shape);
   builder_.add_elem_type(elem_type);
   return builder_.Finish();
 }
@@ -735,6 +805,7 @@ struct NodeEdgeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  NodeEdgeBuilder &operator=(const NodeEdgeBuilder &);
   flatbuffers::Offset<NodeEdge> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<NodeEdge>(end);
@@ -904,6 +975,7 @@ struct NodeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  NodeBuilder &operator=(const NodeBuilder &);
   flatbuffers::Offset<Node> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Node>(end);
@@ -1030,6 +1102,7 @@ struct ValueInfoBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  ValueInfoBuilder &operator=(const ValueInfoBuilder &);
   flatbuffers::Offset<ValueInfo> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<ValueInfo>(end);
@@ -1089,6 +1162,9 @@ struct TypeInfo FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const onnxruntime::experimental::fbs::MapType *value_as_map_type() const {
     return value_type() == onnxruntime::experimental::fbs::TypeInfoValue::map_type ? static_cast<const onnxruntime::experimental::fbs::MapType *>(value()) : nullptr;
   }
+  const onnxruntime::experimental::fbs::SparseTensorType *value_as_sparse_tensor_type() const {
+    return value_type() == onnxruntime::experimental::fbs::TypeInfoValue::sparse_tensor_type ? static_cast<const onnxruntime::experimental::fbs::SparseTensorType *>(value()) : nullptr;
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_DENOTATION) &&
@@ -1112,6 +1188,10 @@ template<> inline const onnxruntime::experimental::fbs::MapType *TypeInfo::value
   return value_as_map_type();
 }
 
+template<> inline const onnxruntime::experimental::fbs::SparseTensorType *TypeInfo::value_as<onnxruntime::experimental::fbs::SparseTensorType>() const {
+  return value_as_sparse_tensor_type();
+}
+
 struct TypeInfoBuilder {
   typedef TypeInfo Table;
   flatbuffers::FlatBufferBuilder &fbb_;
@@ -1129,6 +1209,7 @@ struct TypeInfoBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  TypeInfoBuilder &operator=(const TypeInfoBuilder &);
   flatbuffers::Offset<TypeInfo> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<TypeInfo>(end);
@@ -1196,6 +1277,7 @@ struct OperatorSetIdBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  OperatorSetIdBuilder &operator=(const OperatorSetIdBuilder &);
   flatbuffers::Offset<OperatorSetId> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<OperatorSetId>(end);
@@ -1296,6 +1378,7 @@ struct TensorBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  TensorBuilder &operator=(const TensorBuilder &);
   flatbuffers::Offset<Tensor> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Tensor>(end);
@@ -1342,6 +1425,84 @@ inline flatbuffers::Offset<Tensor> CreateTensorDirect(
       data_type,
       raw_data__,
       string_data__);
+}
+
+struct SparseTensor FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
+  typedef SparseTensorBuilder Builder;
+  enum FlatBuffersVTableOffset FLATBUFFERS_VTABLE_UNDERLYING_TYPE {
+    VT_VALUES = 4,
+    VT_INDICES = 6,
+    VT_DIMS = 8
+  };
+  const onnxruntime::experimental::fbs::Tensor *values() const {
+    return GetPointer<const onnxruntime::experimental::fbs::Tensor *>(VT_VALUES);
+  }
+  const onnxruntime::experimental::fbs::Tensor *indices() const {
+    return GetPointer<const onnxruntime::experimental::fbs::Tensor *>(VT_INDICES);
+  }
+  const flatbuffers::Vector<int64_t> *dims() const {
+    return GetPointer<const flatbuffers::Vector<int64_t> *>(VT_DIMS);
+  }
+  bool Verify(flatbuffers::Verifier &verifier) const {
+    return VerifyTableStart(verifier) &&
+           VerifyOffset(verifier, VT_VALUES) &&
+           verifier.VerifyTable(values()) &&
+           VerifyOffset(verifier, VT_INDICES) &&
+           verifier.VerifyTable(indices()) &&
+           VerifyOffset(verifier, VT_DIMS) &&
+           verifier.VerifyVector(dims()) &&
+           verifier.EndTable();
+  }
+};
+
+struct SparseTensorBuilder {
+  typedef SparseTensor Table;
+  flatbuffers::FlatBufferBuilder &fbb_;
+  flatbuffers::uoffset_t start_;
+  void add_values(flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor> values) {
+    fbb_.AddOffset(SparseTensor::VT_VALUES, values);
+  }
+  void add_indices(flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor> indices) {
+    fbb_.AddOffset(SparseTensor::VT_INDICES, indices);
+  }
+  void add_dims(flatbuffers::Offset<flatbuffers::Vector<int64_t>> dims) {
+    fbb_.AddOffset(SparseTensor::VT_DIMS, dims);
+  }
+  explicit SparseTensorBuilder(flatbuffers::FlatBufferBuilder &_fbb)
+        : fbb_(_fbb) {
+    start_ = fbb_.StartTable();
+  }
+  SparseTensorBuilder &operator=(const SparseTensorBuilder &);
+  flatbuffers::Offset<SparseTensor> Finish() {
+    const auto end = fbb_.EndTable(start_);
+    auto o = flatbuffers::Offset<SparseTensor>(end);
+    return o;
+  }
+};
+
+inline flatbuffers::Offset<SparseTensor> CreateSparseTensor(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor> values = 0,
+    flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor> indices = 0,
+    flatbuffers::Offset<flatbuffers::Vector<int64_t>> dims = 0) {
+  SparseTensorBuilder builder_(_fbb);
+  builder_.add_dims(dims);
+  builder_.add_indices(indices);
+  builder_.add_values(values);
+  return builder_.Finish();
+}
+
+inline flatbuffers::Offset<SparseTensor> CreateSparseTensorDirect(
+    flatbuffers::FlatBufferBuilder &_fbb,
+    flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor> values = 0,
+    flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor> indices = 0,
+    const std::vector<int64_t> *dims = nullptr) {
+  auto dims__ = dims ? _fbb.CreateVector<int64_t>(*dims) : 0;
+  return onnxruntime::experimental::fbs::CreateSparseTensor(
+      _fbb,
+      values,
+      indices,
+      dims__);
 }
 
 struct Attribute FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
@@ -1479,6 +1640,7 @@ struct AttributeBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  AttributeBuilder &operator=(const AttributeBuilder &);
   flatbuffers::Offset<Attribute> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Attribute>(end);
@@ -1567,7 +1729,8 @@ struct Graph FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
     VT_MAX_NODE_INDEX = 10,
     VT_NODE_EDGES = 12,
     VT_INPUTS = 14,
-    VT_OUTPUTS = 16
+    VT_OUTPUTS = 16,
+    VT_SPARSE_INITIALIZERS = 18
   };
   const flatbuffers::Vector<flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor>> *initializers() const {
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor>> *>(VT_INITIALIZERS);
@@ -1590,6 +1753,9 @@ struct Graph FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
   const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *outputs() const {
     return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>> *>(VT_OUTPUTS);
   }
+  const flatbuffers::Vector<flatbuffers::Offset<onnxruntime::experimental::fbs::SparseTensor>> *sparse_initializers() const {
+    return GetPointer<const flatbuffers::Vector<flatbuffers::Offset<onnxruntime::experimental::fbs::SparseTensor>> *>(VT_SPARSE_INITIALIZERS);
+  }
   bool Verify(flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_INITIALIZERS) &&
@@ -1611,6 +1777,9 @@ struct Graph FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
            VerifyOffset(verifier, VT_OUTPUTS) &&
            verifier.VerifyVector(outputs()) &&
            verifier.VerifyVectorOfStrings(outputs()) &&
+           VerifyOffset(verifier, VT_SPARSE_INITIALIZERS) &&
+           verifier.VerifyVector(sparse_initializers()) &&
+           verifier.VerifyVectorOfTables(sparse_initializers()) &&
            verifier.EndTable();
   }
 };
@@ -1640,10 +1809,14 @@ struct GraphBuilder {
   void add_outputs(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> outputs) {
     fbb_.AddOffset(Graph::VT_OUTPUTS, outputs);
   }
+  void add_sparse_initializers(flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<onnxruntime::experimental::fbs::SparseTensor>>> sparse_initializers) {
+    fbb_.AddOffset(Graph::VT_SPARSE_INITIALIZERS, sparse_initializers);
+  }
   explicit GraphBuilder(flatbuffers::FlatBufferBuilder &_fbb)
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  GraphBuilder &operator=(const GraphBuilder &);
   flatbuffers::Offset<Graph> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Graph>(end);
@@ -1659,8 +1832,10 @@ inline flatbuffers::Offset<Graph> CreateGraph(
     uint32_t max_node_index = 0,
     flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<onnxruntime::experimental::fbs::NodeEdge>>> node_edges = 0,
     flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> inputs = 0,
-    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> outputs = 0) {
+    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<flatbuffers::String>>> outputs = 0,
+    flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<onnxruntime::experimental::fbs::SparseTensor>>> sparse_initializers = 0) {
   GraphBuilder builder_(_fbb);
+  builder_.add_sparse_initializers(sparse_initializers);
   builder_.add_outputs(outputs);
   builder_.add_inputs(inputs);
   builder_.add_node_edges(node_edges);
@@ -1679,13 +1854,15 @@ inline flatbuffers::Offset<Graph> CreateGraphDirect(
     uint32_t max_node_index = 0,
     const std::vector<flatbuffers::Offset<onnxruntime::experimental::fbs::NodeEdge>> *node_edges = nullptr,
     const std::vector<flatbuffers::Offset<flatbuffers::String>> *inputs = nullptr,
-    const std::vector<flatbuffers::Offset<flatbuffers::String>> *outputs = nullptr) {
+    const std::vector<flatbuffers::Offset<flatbuffers::String>> *outputs = nullptr,
+    const std::vector<flatbuffers::Offset<onnxruntime::experimental::fbs::SparseTensor>> *sparse_initializers = nullptr) {
   auto initializers__ = initializers ? _fbb.CreateVector<flatbuffers::Offset<onnxruntime::experimental::fbs::Tensor>>(*initializers) : 0;
   auto node_args__ = node_args ? _fbb.CreateVector<flatbuffers::Offset<onnxruntime::experimental::fbs::ValueInfo>>(*node_args) : 0;
   auto nodes__ = nodes ? _fbb.CreateVector<flatbuffers::Offset<onnxruntime::experimental::fbs::Node>>(*nodes) : 0;
   auto node_edges__ = node_edges ? _fbb.CreateVector<flatbuffers::Offset<onnxruntime::experimental::fbs::NodeEdge>>(*node_edges) : 0;
   auto inputs__ = inputs ? _fbb.CreateVector<flatbuffers::Offset<flatbuffers::String>>(*inputs) : 0;
   auto outputs__ = outputs ? _fbb.CreateVector<flatbuffers::Offset<flatbuffers::String>>(*outputs) : 0;
+  auto sparse_initializers__ = sparse_initializers ? _fbb.CreateVector<flatbuffers::Offset<onnxruntime::experimental::fbs::SparseTensor>>(*sparse_initializers) : 0;
   return onnxruntime::experimental::fbs::CreateGraph(
       _fbb,
       initializers__,
@@ -1694,7 +1871,8 @@ inline flatbuffers::Offset<Graph> CreateGraphDirect(
       max_node_index,
       node_edges__,
       inputs__,
-      outputs__);
+      outputs__,
+      sparse_initializers__);
 }
 
 struct Model FLATBUFFERS_FINAL_CLASS : private flatbuffers::Table {
@@ -1786,6 +1964,7 @@ struct ModelBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  ModelBuilder &operator=(const ModelBuilder &);
   flatbuffers::Offset<Model> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<Model>(end);
@@ -1878,6 +2057,7 @@ struct KernelCreateInfosBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  KernelCreateInfosBuilder &operator=(const KernelCreateInfosBuilder &);
   flatbuffers::Offset<KernelCreateInfos> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<KernelCreateInfos>(end);
@@ -1949,6 +2129,7 @@ struct SubGraphSessionStateBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  SubGraphSessionStateBuilder &operator=(const SubGraphSessionStateBuilder &);
   flatbuffers::Offset<SubGraphSessionState> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<SubGraphSessionState>(end);
@@ -2015,6 +2196,7 @@ struct SessionStateBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  SessionStateBuilder &operator=(const SessionStateBuilder &);
   flatbuffers::Offset<SessionState> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<SessionState>(end);
@@ -2088,6 +2270,7 @@ struct InferenceSessionBuilder {
         : fbb_(_fbb) {
     start_ = fbb_.StartTable();
   }
+  InferenceSessionBuilder &operator=(const InferenceSessionBuilder &);
   flatbuffers::Offset<InferenceSession> Finish() {
     const auto end = fbb_.EndTable(start_);
     auto o = flatbuffers::Offset<InferenceSession>(end);
@@ -2135,6 +2318,10 @@ inline bool VerifyTypeInfoValue(flatbuffers::Verifier &verifier, const void *obj
     }
     case TypeInfoValue::map_type: {
       auto ptr = reinterpret_cast<const onnxruntime::experimental::fbs::MapType *>(obj);
+      return verifier.VerifyTable(ptr);
+    }
+    case TypeInfoValue::sparse_tensor_type: {
+      auto ptr = reinterpret_cast<const onnxruntime::experimental::fbs::SparseTensorType *>(obj);
       return verifier.VerifyTable(ptr);
     }
     default: return true;

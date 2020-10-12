@@ -1064,6 +1064,81 @@ TEST_F(GraphTest, UnusedInitializerIsIgnored) {
   ASSERT_TRUE(graph.GetAllInitializedTensors().empty());
 }
 
+static void CreateTensorProto(TensorProto& tensor_proto, const std::string& name,
+                              const std::vector<int64_t>& shape,
+                              const std::vector<int64_t>& data) {
+  tensor_proto.set_name(name);
+  tensor_proto.set_data_type(TensorProto_DataType_INT64);
+  auto* m_dims = tensor_proto.mutable_dims();
+  m_dims->Resize(static_cast<int>(shape.size()), 0);
+  std::copy(shape.cbegin(), shape.cend(), m_dims->begin());
+
+  auto* m_data = tensor_proto.mutable_int64_data();
+  m_data->Resize(static_cast<int>(data.size()), 0);
+  std::copy(data.cbegin(), data.cend(), m_data->begin());
+}
+
+static void CreateSparseTensorProto(const std::string& name,
+                                    std::vector<int64_t> shape,
+                                    std::vector<int64_t> values,
+                                    std::vector<int64_t> indicies_shape,
+                                    std::vector<int64_t> indicies,
+                                    SparseTensorProto& sparse_proto) {
+  auto* m_values = sparse_proto.mutable_values();
+  CreateTensorProto(*m_values, name, {static_cast<int64_t>(values.size())}, values);
+  auto* m_indicies = sparse_proto.mutable_indices();
+  CreateTensorProto(*m_indicies, "spind", indicies_shape, indicies);
+  auto* m_dims = sparse_proto.mutable_dims();
+  m_dims->Resize(static_cast<int>(shape.size()), 0);
+  std::copy(shape.cbegin(), shape.cend(), m_dims->begin());
+}
+
+TEST_F(GraphTest, UnusedSparseInitializerIsIgnored) {
+  Model model("UnusedSparseInitializerIsIgnored", false, *logger_);
+  auto& graph = model.MainGraph();
+
+  TypeProto tensor_int32;
+  tensor_int32.mutable_tensor_type()->set_elem_type(TensorProto_DataType_INT32);
+  tensor_int32.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+
+  auto& input_arg_a = graph.GetOrCreateNodeArg("node_a_in_1", &tensor_int32);
+  auto& output_arg_a = graph.GetOrCreateNodeArg("node_a_out_1", &tensor_int32);
+
+  std::vector<NodeArg*> inputs;
+  std::vector<NodeArg*> outputs;
+  inputs.push_back(&input_arg_a);
+  outputs.push_back(&output_arg_a);
+  graph.AddNode("a", "Identity_Fake", "a", inputs, outputs);
+  auto status = graph.Resolve();
+  EXPECT_TRUE(status.IsOK()) << status.ErrorMessage();
+
+  auto model_proto = model.ToProto();
+  // Add unused SparseInitializer
+  auto* m_graph = model_proto.mutable_graph();
+  auto* m_sparse_initializer = m_graph->mutable_sparse_initializer()->Add();
+  CreateSparseTensorProto("unused_sparse_initializer", {100}, {13, 17, 19}, {3}, {9, 27, 81}, *m_sparse_initializer);
+
+  std::string s1;
+  model_proto.SerializeToString(&s1);
+
+  ModelProto model_proto_1;
+  const bool result = model_proto_1.ParseFromString(s1);
+  ASSERT_TRUE(result) << "Failed to load model from serialized protobuf";
+
+  std::shared_ptr<onnxruntime::Model> p_tmp_model;
+  auto x = onnxruntime::Model::Load(model_proto_1, p_tmp_model, nullptr, *logger_);
+
+  auto& graph2 = p_tmp_model->MainGraph();
+  status = graph2.Resolve();
+  EXPECT_TRUE(status.IsOK()) << status.ErrorMessage();
+  ASSERT_TRUE(graph.GetAllInitializedTensors().empty());
+
+  // Because the initiailizer was unused, it was also removed from
+  // sparse_initializer
+  auto graph_proto = graph2.ToGraphProto();
+  ASSERT_TRUE(graph_proto.sparse_initializer().empty());
+}
+
 TEST_F(GraphTest, GraphConstruction_CheckIsNotAcyclic) {
   // A cyclic graph
   //                 SouceNode

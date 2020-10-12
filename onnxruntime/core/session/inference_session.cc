@@ -55,6 +55,7 @@
 
 using namespace ONNX_NAMESPACE;
 using namespace onnxruntime::experimental;
+using namespace onnxruntime::common;
 
 namespace onnxruntime {
 namespace {

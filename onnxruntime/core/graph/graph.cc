@@ -1106,14 +1106,6 @@ void Graph::InitializeStateFromModelFileGraphProto() {
     graph_initializers.insert({initializer_name, initializer_arg});
   }
 
-  // We currently have no way of overriding sparse initializers even though
-  // they may be reported as such
-  for (auto& sparse_initializer : graph_proto_->sparse_initializer()) {
-    auto& initializer_name = sparse_initializer.values().name();
-    auto initializer_arg = GetNodeArg(initializer_name);
-    graph_initializers.insert({initializer_name, initializer_arg});
-  }
-
   // Set graph inputs.
   // <graph_inputs_including_initializers_> contains inputs exactly specified in proto.
   // <graph_inputs_excluding_initializers_> contains inputs without default value (specified as initializer).
@@ -2788,13 +2780,35 @@ common::Status Graph::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   auto inputs = SaveInputsOutputsToOrtFormat(builder, graph_inputs_including_initializers_);
   auto outputs = SaveInputsOutputsToOrtFormat(builder, graph_outputs_);
 
+  // Generate a set of sparse_initializer names so we can filter them and do not save their dense version
+  // we may have lots of them. Build a set that contains refs to strings.
+  std::unordered_set<std::reference_wrapper<const std::string>, 
+                     std::hash<std::string>,
+                     std::equal_to<std::string>> sparse_initializer_names;
+  sparse_initializer_names.reserve(graph_proto_->sparse_initializer_size());
+
+  std::vector<flatbuffers::Offset<fbs::SparseTensor>> sparse_initializers_data;
+  sparse_initializers_data.reserve(graph_proto_->sparse_initializer_size());
+  for (const auto& sparse_initializer : graph_proto_->sparse_initializer()) {
+    flatbuffers::Offset<fbs::SparseTensor> fbs_sparse_tensor;
+    ORT_RETURN_IF_ERROR(
+        experimental::utils::SaveSparseInitializerOrtFormat(builder, sparse_initializer, fbs_sparse_tensor));
+    sparse_initializers_data.push_back(fbs_sparse_tensor);
+    sparse_initializer_names.emplace(std::cref(sparse_initializer.values().name()));
+  }
+
+  auto sparse_initializers = builder.CreateVector(sparse_initializers_data);
+
+  const auto sparse_end = sparse_initializer_names.end();
   std::vector<flatbuffers::Offset<fbs::Tensor>> initializers_data;
   initializers_data.reserve(name_to_initial_tensor_.size());
   for (const auto& pair : name_to_initial_tensor_) {
-    flatbuffers::Offset<fbs::Tensor> fbs_tensor;
-    ORT_RETURN_IF_ERROR(
-        experimental::utils::SaveInitializerOrtFormat(builder, *pair.second, fbs_tensor));
-    initializers_data.push_back(fbs_tensor);
+    if (sparse_initializer_names.find(pair.first) == sparse_end) {
+      flatbuffers::Offset<fbs::Tensor> fbs_tensor;
+      ORT_RETURN_IF_ERROR(
+          experimental::utils::SaveInitializerOrtFormat(builder, *pair.second, fbs_tensor));
+      initializers_data.push_back(fbs_tensor);
+    }
   }
   auto initializers = builder.CreateVector(initializers_data);
 
@@ -2830,6 +2844,7 @@ common::Status Graph::SaveToOrtFormat(flatbuffers::FlatBufferBuilder& builder,
   gb.add_node_edges(node_edges);
   gb.add_inputs(inputs);
   gb.add_outputs(outputs);
+  gb.add_sparse_initializers(sparse_initializers);
   fbs_graph = gb.Finish();
   return Status::OK();
 }
@@ -3509,7 +3524,7 @@ Graph::Graph(const Model& owning_model,
 
 common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Graph& fbs_graph) {
   // We deserialize the graph from ORT format in the following order:
-  // 1. Deserialize the initializers
+  // 1. Deserialize the initializers and sparse initializers. Convert sparse to dense.
   // 2. Deserialize the NodeArgs
   //        We need all NodeArg instances to exist when deserializing Nodes to setup the Node's
   //        inputs/outputs/implicit inputs which are collections of NodeArg*.
@@ -3520,13 +3535,33 @@ common::Status Graph::LoadFromOrtFormat(const onnxruntime::experimental::fbs::Gr
 
   // Initializers
   auto fbs_initializers = fbs_graph.initializers();
+  auto fbs_sparse_initializers = fbs_graph.sparse_initializers();
+  flatbuffers::uoffset_t map_size = (fbs_initializers != nullptr ? fbs_initializers->size() : 0U) +
+                                    (fbs_sparse_initializers != nullptr ? fbs_sparse_initializers->size() : 0U);
+
+  if (map_size > 0) {
+    name_to_initial_tensor_.reserve(map_size);
+  }
+
   if (fbs_initializers) {
-    name_to_initial_tensor_.reserve(fbs_initializers->size());
     for (const auto* fbs_tensor : *fbs_initializers) {
       ORT_RETURN_IF(nullptr == fbs_tensor, "Initializer tensor is missing. Invalid ORT format model.");
       TensorProto* initializer = deserialized_proto_data_.add_initializer();
       ORT_RETURN_IF_ERROR(experimental::utils::LoadInitializerOrtFormat(*fbs_tensor, *initializer));
-      name_to_initial_tensor_[initializer->name()] = initializer;
+      auto p = name_to_initial_tensor_.emplace(initializer->name(), initializer);
+      ORT_RETURN_IF(!p.second, "Initializer name duplicate found: ", "'", initializer->name(), "'", " Invalid ORT format model.");
+    }
+  }
+
+  if (fbs_sparse_initializers) {
+    for(const auto* fbs_sparse_tensor : *fbs_sparse_initializers) {
+      ORT_RETURN_IF(nullptr == fbs_sparse_tensor, "Sparse Initializer tensor is missing. Invalid ORT format model.");
+      SparseTensorProto sparse_initializer;
+      ORT_RETURN_IF_ERROR(experimental::utils::LoadSparseInitializerOrtFormat(*fbs_sparse_tensor, sparse_initializer));
+      TensorProto* initializer = deserialized_proto_data_.add_initializer();
+      ORT_RETURN_IF_ERROR(utils::SparseTensorProtoToDenseTensorProto(sparse_initializer, *initializer));
+      auto p = name_to_initial_tensor_.emplace(initializer->name(), initializer);
+      ORT_RETURN_IF(!p.second, "Sparse initializer name duplicate found: ", "'", initializer->name(), "'", " Invalid ORT format model.");
     }
   }
 
