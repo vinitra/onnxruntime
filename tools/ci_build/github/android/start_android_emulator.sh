@@ -7,7 +7,7 @@ set -e
 # if it exists, we will use it directly, without running a new emulator instance
 if adb devices | grep -e '^emulator-5682';
 then
-    echo "emulator-5682 is running, exiting without creating new"
+    echo "emulator-5682 is running, exiting without starting new emulator"
     exit 0
 fi
 
