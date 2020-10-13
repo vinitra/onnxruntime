@@ -4,6 +4,7 @@ from __future__ import print_function
 
 # ==================
 import os
+import shutil
 import logging
 import random
 import h5py
@@ -29,7 +30,7 @@ from concurrent.futures import ProcessPoolExecutor
 import onnxruntime as ort
 from onnxruntime.training import amp, optim, orttrainer
 from onnxruntime.training.optim import PolyWarmupLRScheduler, LinearWarmupLRScheduler
-from onnxruntime.training.checkpoint import experimental_save_checkpoint
+from onnxruntime.training.checkpoint import experimental_save_checkpoint, _list_checkpoint_files, _CombineZeroCheckpoint
 
 # need to override torch.onnx.symbolic_opset12.nll_loss to handle ignore_index == -100 cases.
 # the fix for ignore_index == -100 cases is already in pytorch master.
@@ -241,6 +242,16 @@ class PretrainArguments:
         metadata={"help": "Number of update steps until a model checkpoint is saved to disk."}
     )
 
+    save_checkpoint: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Enable for saving a model checkpoint to disk."}
+    )
+
+    init_state_dict: Optional[dict] = field(
+        default=None,
+        metadata={"help": "State to load before training."}
+    )
+
     phase2: bool = field(
         default=False,
         metadata={"help": "Whether to train with seq len 512."}
@@ -302,6 +313,7 @@ def setup_training(args):
 
     if args.local_rank == -1:
         args.local_rank = 0
+        args.world_rank = 0
 
     print("args.local_rank: ", args.local_rank)
     torch.cuda.set_device(args.local_rank)
@@ -323,6 +335,14 @@ def setup_training(args):
     logger.info("setup_training: args.train_batch_size = %d", args.train_batch_size)
     return device, args
 
+def setup_torch_distributed(world_rank, world_size):
+    os.environ['RANK'] = str(world_rank)
+    os.environ['WORLD_SIZE'] = str(world_size)
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = str('12345')
+    torch.distributed.init_process_group(backend='nccl', world_size=world_size,
+        rank=world_rank)
+    return
 
 def prepare_model(args, device):
     config = BertConfig.from_pretrained('bert-base-uncased', cache_dir=args.cache_dir)
@@ -335,6 +355,8 @@ def prepare_model(args, device):
         config.num_attention_heads = 4
 
     model = BertForPreTraining(config)
+    if args.init_state_dict is not None:
+        model.load_state_dict(args.init_state_dict, strict=False)
     model_desc = bert_model_description(config)
 
     lr_scheduler = LinearWarmupLRScheduler(total_steps=int(args.max_steps), warmup=args.warmup_proportion)
@@ -353,15 +375,9 @@ def prepare_model(args, device):
                                             'distributed': {
                                                 'world_rank': max(0, args.local_rank),
                                                 'world_size': args.world_size,
-<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
                                                 'local_rank': max(0, args.local_rank),
-                                                'allreduce_post_accumulation': args.allreduce_post_accumulation},
-                                                'deepspeed_zero_optimization': {'stage': 1}},
-=======
-                                                'local_rank': args.local_rank,
-                                                'allreduce_post_accumulation': True,
+                                                'allreduce_post_accumulation': args.allreduce_post_accumulation,
                                                 'deepspeed_zero_optimization': {'stage': args.deepspeed_zero_stage}},
->>>>>>> initial cleanup
                                             'lr_scheduler': lr_scheduler
                                             })
 
@@ -471,7 +487,8 @@ def do_pretrain(args):
                             tb_writer.close()
 
                     if global_step >= args.max_steps:
-                        experimental_save_checkpoint(model, args.output_dir)
+                        if args.save_checkpoint:
+                            experimental_save_checkpoint(model, args.output_dir)
                         final_loss = average_loss / (args.log_freq * args.gradient_accumulation_steps)
                         return final_loss
 
@@ -549,11 +566,6 @@ class ORTBertPretrainTest(unittest.TestCase):
         do_pretrain(args)
 
     def test_pretrain_convergence(self):
-<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
-=======
-        self.max_steps = 200
-        self.force_num_hidden_layers = 8
->>>>>>> initial cleanup
         args = PretrainArguments(
             output_dir=self.output_dir,
             bert_model=self.bert_model,
@@ -569,15 +581,14 @@ class ORTBertPretrainTest(unittest.TestCase):
             input_dir=self.input_dir,
             fp16=self.fp16,
             allreduce_post_accumulation=self.allreduce_post_accumulation,
-<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
             force_num_hidden_layers=self.force_num_hidden_layers,
             tensorboard_dir=generate_tensorboard_logdir('/bert_data/hf_data/test_out/'))
-=======
-            force_num_hidden_layers=self.force_num_hidden_layers)
         final_loss = do_pretrain(args)
         return final_loss
     
     def test_pretrain_zero(self):
+        assert self.world_size >0, "ZeRO test requires a distributed run."
+        setup_torch_distributed(self.world_rank, self.world_size)
         per_gpu_batch_size = 32
         optimization_batch_size = per_gpu_batch_size*self.world_size # set to disable grad accumulation
         
@@ -585,10 +596,17 @@ class ORTBertPretrainTest(unittest.TestCase):
         self.gradient_accumulation_steps = 1
         self.deepspeed_zero_stage = 1
         self.force_num_hidden_layers = 2
-        self.output_dir = './'
         self.max_seq_length = 32
-        # only to run on  optimization step because we only want to make sure there is no throughput regression
-        self.max_steps = 50
+        self.output_dir = './bert_pretrain_ckpt'
+        if self.world_rank == 0:            
+            if os.path.isdir(self.output_dir):
+                shutil.rmtree(self.output_dir)
+            os.makedirs(self.output_dir, exist_ok = True)
+        assert os.path.exists(self.output_dir)
+        torch.distributed.barrier()
+        
+        # run a few optimization steps
+        self.max_steps = 200
         args = PretrainArguments(
             output_dir=self.output_dir,
             bert_model=self.bert_model,
@@ -604,9 +622,28 @@ class ORTBertPretrainTest(unittest.TestCase):
             input_dir=self.input_dir,
             fp16=self.fp16,
             allreduce_post_accumulation=self.allreduce_post_accumulation,
-            force_num_hidden_layers=self.force_num_hidden_layers
-            deepspeed_zero_stage = self.deepspeed_zero_stage)
->>>>>>> initial cleanup
+            force_num_hidden_layers=self.force_num_hidden_layers,
+            deepspeed_zero_stage = self.deepspeed_zero_stage,
+            save_checkpoint = True)
+        train_loss = do_pretrain(args)
+
+        # ensure all workers reach this point before loading the checkpointed state
+        torch.distributed.barrier()
+
+        # on rank 0, load the trained state
+        if args.world_rank == 0:
+            checkpoint_files = _list_checkpoint_files(self.output_dir, "ORT_checkpoint")
+            ckpt_agg = _CombineZeroCheckpoint(checkpoint_files)
+            final_state_dict = ckpt_agg.aggregate_checkpoints()
+            
+            args.init_state_dict = final_state_dict
+
+        torch.distributed.barrier()
+
+        # run a single step to get the loss, on rank 0 should be lesser than starting loss
+        args.save_checkpoint = False
+        args.max_steps = 1
+        args.deepspeed_zero_stage = 0
         final_loss = do_pretrain(args)
         return final_loss
 
@@ -642,11 +679,7 @@ if __name__ == "__main__":
             logger.info("running ORTBertPretrainTest.test_pretrain_throughput()...")
             test.test_pretrain_throughput()
             logger.info("ORTBertPretrainTest.test_pretrain_throughput() passed")
-<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
         elif len(sys.argv) >= 2 and sys.argv[1] == 'ORTBertPretrainTest.test_pretrain_convergence':
-=======
-        elif sys.argv[-1] == 'ORTBertPretrainTest.test_pretrain_convergence':
->>>>>>> initial cleanup
             logger.info("running ORTBertPretrainTest.test_pretrain_convergence()...")
             test.max_steps = 200
             test.force_num_hidden_layers = 8
@@ -654,8 +687,16 @@ if __name__ == "__main__":
             logger.info("ORTBertPretrainTest.test_pretrain_convergence() final loss = %f", final_loss)
             test.assertLess(final_loss, 8.5)
             logger.info("ORTBertPretrainTest.test_pretrain_convergence() passed")
+        elif len(sys.argv) >= 2 and sys.argv[1] == 'ORTBertPretrainTest.test_pretrain_zero':
+            logger.info("running ORTBertPretrainTest.test_pretrain_zero()...")
+            final_loss = test.test_pretrain_zero()
+            logger.info("ORTBertPretrainTest.test_pretrain_zero() rank = %i final loss = %f", local_rank, final_loss)
+            if local_rank == 0:
+                test.assertLess(final_loss, 10.2)
+            else:
+                test.assertGreater(final_loss, 11.0)
+            logger.info("ORTBertPretrainTest.test_pretrain_zero() passed")
         else:
-<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
             # https://microsoft.sharepoint.com/teams/ONNX2/_layouts/15/Doc.aspx?sourcedoc={170774be-e1c6-4f8b-a3ae-984f211fe410}&action=edit&wd=target%28ONNX%20Training.one%7C8176133b-c7cb-4ef2-aa9d-3fdad5344c40%2FGitHub%20Master%20Merge%20Schedule%7Cb67f0db1-e3a0-4add-80a6-621d67fd8107%2F%29
             # to make equivalent args for cpp convergence test
 
@@ -696,12 +737,5 @@ if __name__ == "__main__":
 
             final_loss = test.test_pretrain_convergence()
             logger.info("ORTBertPretrainTest.test_pretrain_convergence() final loss = %f", final_loss)
-=======
-            logger.info("running ORTBertPretrainTest.test_pretrain_zero()...")
-            final_loss = test.test_pretrain_zero()
-            logger.info("ORTBertPretrainTest.test_pretrain_zero() final loss = %f", final_loss)
-            test.assertLess(final_loss, 8.5)
-            logger.info("ORTBertPretrainTest.test_pretrain_zero() passed")
->>>>>>> initial cleanup
     else:
         unittest.main()
