@@ -351,8 +351,6 @@ def prepare_model(args, device):
     if args.force_num_hidden_layers:
         logger.info("Modifying model config with num_hidden_layers to %d", args.force_num_hidden_layers)
         config.num_hidden_layers = args.force_num_hidden_layers
-        config.hidden_size = 256
-        config.num_attention_heads = 4
 
     model = BertForPreTraining(config)
     if args.init_state_dict is not None:
@@ -536,10 +534,8 @@ class ORTBertPretrainTest(unittest.TestCase):
         # args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps // args.world_size
 
         # the LAMB batch size of 64k
-        # optimization_batch_size = 64 * 1024
+        optimization_batch_size = 64 * 1024
         per_gpu_batch_size = 32
-        optimization_batch_size = per_gpu_batch_size*self.world_size # set to disable grad accumulation
-        
 
         self.train_batch_size = optimization_batch_size
         self.gradient_accumulation_steps = optimization_batch_size // per_gpu_batch_size // self.world_size
@@ -547,7 +543,7 @@ class ORTBertPretrainTest(unittest.TestCase):
         logger.info("self.gradient_accumulation_steps = %d", self.gradient_accumulation_steps)
 
         # only to run on  optimization step because we only want to make sure there is no throughput regression
-        self.max_steps = 50
+        self.max_steps = 1
         args = PretrainArguments(
             output_dir=self.output_dir,
             bert_model=self.bert_model,
@@ -602,8 +598,10 @@ class ORTBertPretrainTest(unittest.TestCase):
             if os.path.isdir(self.output_dir):
                 shutil.rmtree(self.output_dir)
             os.makedirs(self.output_dir, exist_ok = True)
-        assert os.path.exists(self.output_dir)
+        
         torch.distributed.barrier()
+
+        assert os.path.exists(self.output_dir)        
         
         # run a few optimization steps
         self.max_steps = 200
