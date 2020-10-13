@@ -102,6 +102,8 @@ echo "Installing dotnet-sdk"
 if [ "$SYS_LONG_BIT" = "64" ]; then
   mkdir -p /tmp/dotnet
   aria2c -q -d /tmp/dotnet https://packages.microsoft.com/config/ubuntu/${OS_VERSION}/packages-microsoft-prod.deb
+  add-apt-repository universe
+  apt-get update  
   dpkg -i /tmp/dotnet/packages-microsoft-prod.deb
   apt-get update
   apt-get install -y dotnet-runtime-2.1
