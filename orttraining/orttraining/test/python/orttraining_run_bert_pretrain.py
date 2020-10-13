@@ -211,6 +211,11 @@ class PretrainArguments:
         metadata={"help": "Loss scaling, positive power of 2 values can improve fp16 convergence."}
     )
 
+    deepspeed_zero_stage: Optional[int] = field(
+        default=0,
+        metadata={"help": "Deepspeed Zero Stage. 0 => disabled"}
+    )
+
     log_freq: Optional[float] = field(
         default=1.0,
         metadata={"help": "frequency of logging loss."}
@@ -272,7 +277,7 @@ class PretrainArguments:
     # this argument is test specific. to run a full bert model will take too long to run. instead, we reduce
     # number of hidden layers so that it can show convergence to an extend to help detect any regression.
     force_num_hidden_layers: Optional[int] = field(
-        default=2,
+        default=None,
         metadata={"help": "Whether to use fp16 gradient accumulators."}
     )
 
@@ -348,9 +353,15 @@ def prepare_model(args, device):
                                             'distributed': {
                                                 'world_rank': max(0, args.local_rank),
                                                 'world_size': args.world_size,
+<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
                                                 'local_rank': max(0, args.local_rank),
                                                 'allreduce_post_accumulation': args.allreduce_post_accumulation},
                                                 'deepspeed_zero_optimization': {'stage': 1}},
+=======
+                                                'local_rank': args.local_rank,
+                                                'allreduce_post_accumulation': True,
+                                                'deepspeed_zero_optimization': {'stage': args.deepspeed_zero_stage}},
+>>>>>>> initial cleanup
                                             'lr_scheduler': lr_scheduler
                                             })
 
@@ -482,12 +493,12 @@ def generate_tensorboard_logdir(root_dir):
 
 class ORTBertPretrainTest(unittest.TestCase):
     def setUp(self):
-        self.output_dir = './'
+        self.output_dir = '/bert_data/hf_data/test_out/bert_pretrain_results'
         self.bert_model = 'bert-base-uncased'
         self.local_rank = -1
         self.world_rank = -1
         self.world_size = 1
-        self.max_steps = 10
+        self.max_steps = 300000
         self.learning_rate = 5e-4
         self.max_seq_length = 512
         self.max_predictions_per_seq = 20
@@ -538,6 +549,11 @@ class ORTBertPretrainTest(unittest.TestCase):
         do_pretrain(args)
 
     def test_pretrain_convergence(self):
+<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
+=======
+        self.max_steps = 200
+        self.force_num_hidden_layers = 8
+>>>>>>> initial cleanup
         args = PretrainArguments(
             output_dir=self.output_dir,
             bert_model=self.bert_model,
@@ -553,8 +569,44 @@ class ORTBertPretrainTest(unittest.TestCase):
             input_dir=self.input_dir,
             fp16=self.fp16,
             allreduce_post_accumulation=self.allreduce_post_accumulation,
+<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
             force_num_hidden_layers=self.force_num_hidden_layers,
             tensorboard_dir=generate_tensorboard_logdir('/bert_data/hf_data/test_out/'))
+=======
+            force_num_hidden_layers=self.force_num_hidden_layers)
+        final_loss = do_pretrain(args)
+        return final_loss
+    
+    def test_pretrain_zero(self):
+        per_gpu_batch_size = 32
+        optimization_batch_size = per_gpu_batch_size*self.world_size # set to disable grad accumulation
+        
+        self.train_batch_size = optimization_batch_size
+        self.gradient_accumulation_steps = 1
+        self.deepspeed_zero_stage = 1
+        self.force_num_hidden_layers = 2
+        self.output_dir = './'
+        self.max_seq_length = 32
+        # only to run on  optimization step because we only want to make sure there is no throughput regression
+        self.max_steps = 50
+        args = PretrainArguments(
+            output_dir=self.output_dir,
+            bert_model=self.bert_model,
+            local_rank=self.local_rank,
+            world_rank=self.world_rank,
+            world_size=self.world_size,
+            max_steps=self.max_steps,
+            learning_rate=self.learning_rate,
+            max_seq_length=self.max_seq_length,
+            max_predictions_per_seq=self.max_predictions_per_seq,
+            train_batch_size=self.train_batch_size,
+            gradient_accumulation_steps=self.gradient_accumulation_steps,
+            input_dir=self.input_dir,
+            fp16=self.fp16,
+            allreduce_post_accumulation=self.allreduce_post_accumulation,
+            force_num_hidden_layers=self.force_num_hidden_layers
+            deepspeed_zero_stage = self.deepspeed_zero_stage)
+>>>>>>> initial cleanup
         final_loss = do_pretrain(args)
         return final_loss
 
@@ -590,15 +642,20 @@ if __name__ == "__main__":
             logger.info("running ORTBertPretrainTest.test_pretrain_throughput()...")
             test.test_pretrain_throughput()
             logger.info("ORTBertPretrainTest.test_pretrain_throughput() passed")
+<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
         elif len(sys.argv) >= 2 and sys.argv[1] == 'ORTBertPretrainTest.test_pretrain_convergence':
+=======
+        elif sys.argv[-1] == 'ORTBertPretrainTest.test_pretrain_convergence':
+>>>>>>> initial cleanup
             logger.info("running ORTBertPretrainTest.test_pretrain_convergence()...")
             test.max_steps = 200
             test.force_num_hidden_layers = 8
             final_loss = test.test_pretrain_convergence()
             logger.info("ORTBertPretrainTest.test_pretrain_convergence() final loss = %f", final_loss)
-            # test.assertLess(final_loss, 8.5)
+            test.assertLess(final_loss, 8.5)
             logger.info("ORTBertPretrainTest.test_pretrain_convergence() passed")
         else:
+<<<<<<< 03d153c23e8f96688645c98ee60bc2f7e700d4cb
             # https://microsoft.sharepoint.com/teams/ONNX2/_layouts/15/Doc.aspx?sourcedoc={170774be-e1c6-4f8b-a3ae-984f211fe410}&action=edit&wd=target%28ONNX%20Training.one%7C8176133b-c7cb-4ef2-aa9d-3fdad5344c40%2FGitHub%20Master%20Merge%20Schedule%7Cb67f0db1-e3a0-4add-80a6-621d67fd8107%2F%29
             # to make equivalent args for cpp convergence test
 
@@ -639,5 +696,12 @@ if __name__ == "__main__":
 
             final_loss = test.test_pretrain_convergence()
             logger.info("ORTBertPretrainTest.test_pretrain_convergence() final loss = %f", final_loss)
+=======
+            logger.info("running ORTBertPretrainTest.test_pretrain_zero()...")
+            final_loss = test.test_pretrain_zero()
+            logger.info("ORTBertPretrainTest.test_pretrain_zero() final loss = %f", final_loss)
+            test.assertLess(final_loss, 8.5)
+            logger.info("ORTBertPretrainTest.test_pretrain_zero() passed")
+>>>>>>> initial cleanup
     else:
         unittest.main()
