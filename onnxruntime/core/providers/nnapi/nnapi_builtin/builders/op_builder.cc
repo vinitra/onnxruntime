@@ -33,50 +33,6 @@ GET_TENSOR_DATA(Int64Data, int64_t, int64_data)
 
 #undef GET_TENSOR_DATA
 
-// TODO, move this to a shared location
-#define CASE_UNPACK(TYPE, ELEMENT_TYPE, DATA_SIZE)                              \
-  case ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_##TYPE: {     \
-    size_t element_count = initializer.has_raw_data()                           \
-                               ? initializer.raw_data().size()                  \
-                               : initializer.DATA_SIZE();                       \
-    tensor_byte_size = element_count * sizeof(ELEMENT_TYPE);                    \
-    unpacked_tensor.reset(new uint8_t[tensor_byte_size]);                       \
-    return onnxruntime::utils::UnpackTensor(                                    \
-        initializer,                                                            \
-        initializer.has_raw_data() ? initializer.raw_data().data() : nullptr,   \
-        initializer.has_raw_data() ? initializer.raw_data().size() : 0,         \
-        reinterpret_cast<ELEMENT_TYPE*>(unpacked_tensor.get()), element_count); \
-    break;                                                                      \
-  }
-
-static Status UnpackInitializerTensor(const onnx::TensorProto& initializer,
-                                      std::unique_ptr<uint8_t[]>& unpacked_tensor,
-                                      size_t& tensor_byte_size) ORT_MUST_USE_RESULT;
-static Status UnpackInitializerTensor(const onnx::TensorProto& initializer,
-                                      std::unique_ptr<uint8_t[]>& unpacked_tensor,
-                                      size_t& tensor_byte_size) {
-  switch (initializer.data_type()) {
-    CASE_UNPACK(FLOAT, float, float_data_size);
-    CASE_UNPACK(DOUBLE, double, double_data_size);
-    CASE_UNPACK(BOOL, bool, int32_data_size);
-    CASE_UNPACK(INT8, int8_t, int32_data_size);
-    CASE_UNPACK(INT16, int16_t, int32_data_size);
-    CASE_UNPACK(INT32, int32_t, int32_data_size);
-    CASE_UNPACK(INT64, int64_t, int64_data_size);
-    CASE_UNPACK(UINT8, uint8_t, int32_data_size);
-    CASE_UNPACK(UINT16, uint16_t, int32_data_size);
-    CASE_UNPACK(UINT32, uint32_t, uint64_data_size);
-    CASE_UNPACK(UINT64, uint64_t, uint64_data_size);
-    CASE_UNPACK(FLOAT16, onnxruntime::MLFloat16, int32_data_size);
-    CASE_UNPACK(BFLOAT16, onnxruntime::BFloat16, int32_data_size);
-    default:
-      break;
-  }
-  return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
-                         "Unsupported type: ", initializer.data_type());
-}
-#undef CASE_UNPACK
-
 #define ADD_SCALAR_OPERAND(model_builder, input_indices, scalar_value)             \
   {                                                                                \
     uint32_t _index = 0;                                                           \
@@ -268,7 +224,7 @@ static Status AddInitializerInNewLayout(ModelBuilder& model_builder,
     case ONNX_NAMESPACE::TensorProto_DataType_UINT8:
     case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
       ORT_RETURN_IF_ERROR(
-          UnpackInitializerTensor(tensor, unpacked_tensor, tensor_byte_size));
+          onnxruntime::utils::UnpackInitializerData(tensor, unpacked_tensor, tensor_byte_size));
       src = unpacked_tensor.get();
       break;
     }
@@ -348,7 +304,7 @@ static Status AddInitializerTransposed(ModelBuilder& model_builder,
     case ONNX_NAMESPACE::TensorProto_DataType_UINT8:
     case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
       ORT_RETURN_IF_ERROR(
-          UnpackInitializerTensor(tensor, unpacked_tensor, tensor_byte_size));
+          onnxruntime::utils::UnpackInitializerData(tensor, unpacked_tensor, tensor_byte_size));
       src = unpacked_tensor.get();
       break;
     }
@@ -519,7 +475,7 @@ static Status GetQuantizationZeroPoint(const ModelBuilder& model_builder, const 
   size_t tensor_byte_size;
   const auto& zero_point_tensor = model_builder.GetInitializerTensors().at(node.InputDefs()[idx]->Name());
   ORT_RETURN_IF_ERROR(
-      UnpackInitializerTensor(zero_point_tensor, unpacked_tensor, tensor_byte_size));
+      onnxruntime::utils::UnpackInitializerData(zero_point_tensor, unpacked_tensor, tensor_byte_size));
   zero_point = static_cast<int32_t>(unpacked_tensor.get()[0]);
   return Status::OK();
 }
