@@ -83,7 +83,7 @@ Status TransposeBetweenNCHWAndNHWC(ModelBuilder& model_builder,
   ORT_RETURN_IF_NOT(!model_builder.UseNCHW(), "model_builder.UseNCHW() is on");
   const auto& shaper(model_builder.GetShaper());
   ORT_RETURN_IF_NOT(4 == shaper[input].size(),
-                    "TransposeNCHWToNHWC input has to be a 4d tensor, actual dimensions: ", shaper[input].size());
+                    "TransposeBetweenNCHWAndNHWC input has to be a 4d tensor, actual dimensions: ", shaper[input].size());
 
   std::string perm_name;
   vector<int32_t> perm;
@@ -129,6 +129,28 @@ Status TransposeNCHWToNHWC(ModelBuilder& model_builder,
                            const std::string& input,
                            const std::string& output) {
   return TransposeBetweenNCHWAndNHWC(model_builder, input, output, true /* nchw_to_nhwc */);
+}
+
+// Convert the input from nchw to nhwc
+Status GetNHWCInput(ModelBuilder& model_builder, const Node& node, size_t input_index, std::string& input) {
+  const auto& nchw_input = node.InputDefs()[input_index]->Name();
+  ORT_RETURN_IF(model_builder.IsOperandNHWC(input));
+  if (!model_builder.GetNHWCOperand(nchw_input, input)) {
+    input = model_builder.GetUniqueName(nchw_input + "_nchw_to_nhwc");
+    ORT_RETURN_IF_ERROR(TransposeNCHWToNHWC(model_builder, nchw_input, input));
+  }
+  return Status::OK();
+}
+
+// Convert the input from nhwc to nchw
+Status GetNCHWInput(ModelBuilder& model_builder, const Node& node, size_t input_index, std::string& input) {
+  const auto& nhwc_input = node.InputDefs()[input_index]->Name();
+  ORT_RETURN_IF_NOT(model_builder.IsOperandNHWC(input));
+  if (!model_builder.GetNCHWOperand(nhwc_input, input)) {
+    input = model_builder.GetUniqueName(nhwc_input + "_nhwc_to_nchw");
+    ORT_RETURN_IF_ERROR(TransposeNHWCToNCHW(model_builder, nhwc_input, input));
+  }
+  return Status::OK();
 }
 
 static Status AddBinaryOperator(int32_t op_type,
@@ -603,6 +625,38 @@ Status GetQuantizedInputScaleAndZeroPoint(const ModelBuilder& model_builder,
   return Status::OK();
 }
 
+bool GetClipMinMax(const ModelBuilder& model_builder, const Node& node, float& min, float& max) {
+  min = std::numeric_limits<float>::lowest();
+  max = std::numeric_limits<float>::max();
+  if (node.SinceVersion() < 11) {  // Clip opset 1, 6 is using attributes for min/max
+    NodeAttrHelper helper(node);
+    min = helper.Get("min", std::numeric_limits<float>::lowest());
+    max = helper.Get("max", std::numeric_limits<float>::max());
+  } else {
+    const auto& initializers(model_builder.GetInitializerTensors());
+
+    if (node.InputDefs().size() > 1) {  // we have input min
+      const auto& min_name = node.InputDefs()[1]->Name();
+      if (!Contains(initializers, min_name)) {
+        LOGS_DEFAULT(VERBOSE) << "Input min of Clip must be known";
+        return false;
+      }
+      min = GetTensorFloatData(initializers.at(min_name))[0];
+    }
+
+    if (node.InputDefs().size() > 2) {  // we have input max
+      const auto& max_name = node.InputDefs()[2]->Name();
+      if (!Contains(initializers, max_name)) {
+        LOGS_DEFAULT(VERBOSE) << "Input max of Clip must be known";
+        return false;
+      }
+      max = GetTensorFloatData(initializers.at(max_name))[0];
+    }
+  }
+
+  return true;
+}
+
 #pragma endregion helpers
 
 #pragma region op_base
@@ -833,18 +887,10 @@ Status BinaryOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const
     output_is_nhwc = input1_is_nhwc;
   } else if (input1_is_nhwc) {
     // need transpsoe input1 back to nchw
-    const auto& nhwc_input = input_defs[a_idx]->Name();
-    if (!model_builder.GetNCHWOperand(nhwc_input, input1)) {
-      input1 = model_builder.GetUniqueName(nhwc_input + "_nhwc_to_nchw");
-      ORT_RETURN_IF_ERROR(TransposeNHWCToNCHW(model_builder, nhwc_input, input1));
-    }
+    GetNCHWInput(model_builder, node, a_idx, input1);
   } else {  // input2_is_nhwc
     // need transpsoe input2 back to nchw
-    const auto& nhwc_input = input_defs[b_idx]->Name();
-    if (!model_builder.GetNCHWOperand(nhwc_input, input2)) {
-      input2 = model_builder.GetUniqueName(nhwc_input + "_nhwc_to_nchw");
-      ORT_RETURN_IF_ERROR(TransposeNHWCToNCHW(model_builder, nhwc_input, input2));
-    }
+    GetNCHWInput(model_builder, node, b_idx, input2);
   }
 
   float a_scale = 0.0f,
@@ -1031,11 +1077,7 @@ Status ReshapeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, cons
   auto input = node.InputDefs()[0]->Name();
   if (model_builder.IsOperandNHWC(input)) {
     // We want to transpose nhwc operand back to nchw before reshape
-    const auto& nhwc_input = node.InputDefs()[0]->Name();
-    if (!model_builder.GetNCHWOperand(nhwc_input, input)) {
-      input = model_builder.GetUniqueName(nhwc_input + "_nhwc_to_nchw");
-      ORT_RETURN_IF_ERROR(TransposeNHWCToNCHW(model_builder, nhwc_input, input));
-    }
+    GetNCHWInput(model_builder, node, 0, input);
   }
 
   const auto& output = node.OutputDefs()[0]->Name();
@@ -1309,11 +1351,7 @@ Status PoolOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
   } else {
     output_is_nhwc = true;
     if (!input_is_nhwc) {
-      const auto& nchw_input = node.InputDefs()[0]->Name();
-      if (!model_builder.GetNHWCOperand(nchw_input, input)) {
-        input = model_builder.GetUniqueName(nchw_input + "_nchw_to_nhwc");
-        ORT_RETURN_IF_ERROR(TransposeNCHWToNHWC(model_builder, nchw_input, input));
-      }
+      ORT_RETURN_IF_ERROR(GetNHWCInput(model_builder, node, 0, input));
     }
   }
 
@@ -1537,11 +1575,7 @@ Status ConvOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
   } else {
     output_is_nhwc = true;
     if (!input_is_nhwc) {
-      const auto& nchw_input = input_defs[x_idx]->Name();
-      if (!model_builder.GetNHWCOperand(nchw_input, input)) {
-        input = model_builder.GetUniqueName(nchw_input + "_nchw_to_nhwc");
-        ORT_RETURN_IF_ERROR(TransposeNCHWToNHWC(model_builder, nchw_input, input));
-      }
+      ORT_RETURN_IF_ERROR(GetNHWCInput(model_builder, node, x_idx, input));
     }
   }
 
@@ -1837,11 +1871,7 @@ Status SoftMaxOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, cons
     if (model_builder.IsOperandNHWC(input)) {
       output_is_nhwc = false;
       // We want to transpose nhwc operand back to nchw before softmax
-      const auto& nhwc_input = node.InputDefs()[0]->Name();
-      if (!model_builder.GetNCHWOperand(nhwc_input, input)) {
-        input = model_builder.GetUniqueName(nhwc_input + "_nhwc_to_nchw");
-        ORT_RETURN_IF_ERROR(TransposeNHWCToNCHW(model_builder, nhwc_input, input));
-      }
+      GetNCHWInput(model_builder, node, 0, input);
     }
   }
 
@@ -2269,20 +2299,15 @@ Status ConcatOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const
     for (size_t i = 0; i < node_input_size; i++) {
       auto input = node.InputDefs()[i]->Name();
       if (model_builder.IsOperandNHWC(input)) {
-        std::string nhwc_input = input;
-        input = model_builder.GetUniqueName(input + "_nhwc_to_nchw");
-        ORT_RETURN_IF_ERROR(TransposeNHWCToNCHW(model_builder, nhwc_input, input));
+        GetNCHWInput(model_builder, node, i, input);
       }
       input_indices.push_back(operand_indices.at(input));
       inputs.push_back(input);
     }
   }
 
-  int32_t axis = helper.Get("axis", 1);
   int rank = shaper[input0].size();
-  if (axis < 0) {  // NNAPI does not support negative axis
-    axis = rank + axis;
-  }
+  int32_t axis = SafeInt<int32_t>(HandleNegativeAxis(helper.Get("axis", 1), rank));
 
   if (output_is_nhwc) {
     ORT_RETURN_IF_NOT(rank == 4,
@@ -2339,11 +2364,7 @@ Status SqueezeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, cons
   auto input = node.InputDefs()[0]->Name();
   if (model_builder.IsOperandNHWC(input)) {
     // We want to transpose nhwc operand back to nchw before squeeze
-    const auto& nhwc_input = node.InputDefs()[0]->Name();
-    if (!model_builder.GetNCHWOperand(nhwc_input, input)) {
-      input = model_builder.GetUniqueName(nhwc_input + "_nhwc_to_nchw");
-      ORT_RETURN_IF_ERROR(TransposeNHWCToNCHW(model_builder, nhwc_input, input));
-    }
+    GetNCHWInput(model_builder, node, 0, input);
   }
 
   NodeAttrHelper helper(node);
@@ -2351,8 +2372,7 @@ Status SqueezeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, cons
   const auto& input_shape(shaper[input]);
   auto input_dims = input_shape.size();
   for (auto& axis : axes) {
-    if (axis < 0)
-      axis += input_dims;
+    axis = SafeInt<int32_t>(HandleNegativeAxis(axis, input_dims));
   }
 
   if (axes.empty()) {  // Squeeze all
@@ -2587,11 +2607,7 @@ Status LRNOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const No
     // on android api level 28, we need to transpose the nchw input to nhwc
     output_is_nhwc = true;
     if (!model_builder.IsOperandNHWC(input)) {
-      const auto& nchw_input = node.InputDefs()[0]->Name();
-      if (!model_builder.GetNHWCOperand(nchw_input, input)) {
-        input = model_builder.GetUniqueName(nchw_input + "_nchw_to_nhwc");
-        ORT_RETURN_IF_ERROR(TransposeNCHWToNHWC(model_builder, nchw_input, input));
-      }
+      ORT_RETURN_IF_ERROR(GetNHWCInput(model_builder, node, 0, input));
     }
   }
 
@@ -2637,7 +2653,6 @@ class ClipOpBuilder : public BaseOpBuilder {
  private:
   bool IsOpSupportedImpl(ModelBuilder& model_builder, const Node& node) override;
   Status AddToModelBuilderImpl(ModelBuilder& model_builder, const Node& node) override ORT_MUST_USE_RESULT;
-  static bool GetMinMax(ModelBuilder& model_builder, const Node& node, float& min, float& max);
 };
 
 void ClipOpBuilder::AddInitializersToSkip(ModelBuilder& model_builder, const Node& node) {
@@ -2648,40 +2663,9 @@ void ClipOpBuilder::AddInitializersToSkip(ModelBuilder& model_builder, const Nod
     model_builder.AddInitializerToSkip(node.InputDefs()[2]->Name());  // max
 }
 
-/* static */ bool ClipOpBuilder::GetMinMax(ModelBuilder& model_builder, const Node& node, float& min, float& max) {
-  if (node.SinceVersion() < 11) {  // Clip opset 1, 6 is using attributes for min/max
-    NodeAttrHelper helper(node);
-    min = helper.Get("min", std::numeric_limits<float>::lowest());
-    max = helper.Get("max", std::numeric_limits<float>::max());
-  } else {
-    const auto& initializers(model_builder.GetInitializerTensors());
-
-    if (node.InputDefs().size() > 1) {  // we have input min
-      const auto& min_name = node.InputDefs()[1]->Name();
-      if (!Contains(initializers, min_name)) {
-        LOGS_DEFAULT(VERBOSE) << "Input min of Clip must be known";
-        return false;
-      }
-      min = GetTensorFloatData(initializers.at(min_name))[0];
-    }
-
-    if (node.InputDefs().size() > 2) {  // we have input max
-      const auto& max_name = node.InputDefs()[2]->Name();
-      if (!Contains(initializers, max_name)) {
-        LOGS_DEFAULT(VERBOSE) << "Input max of Clip must be known";
-        return false;
-      }
-      max = GetTensorFloatData(initializers.at(max_name))[0];
-    }
-  }
-
-  return true;
-}
-
 bool ClipOpBuilder::IsOpSupportedImpl(ModelBuilder& model_builder, const Node& node) {
-  float min = std::numeric_limits<float>::lowest();
-  float max = std::numeric_limits<float>::max();
-  if (!GetMinMax(model_builder, node, min, max))
+  float min, max;
+  if (!GetClipMinMax(model_builder, node, min, max))
     return false;
 
   // We only supoort relu6 or relu1
@@ -2709,9 +2693,14 @@ Status ClipOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const N
   ORT_RETURN_IF_ERROR(shaper.Identity(input, output));
   const OperandType output_operand_type(operand_types.at(input).type, shaper[output]);
 
-  float min = std::numeric_limits<float>::lowest();
-  float max = std::numeric_limits<float>::max();
-  GetMinMax(model_builder, node, min, max);
+  if (Contains(model_builder.GetFusedActivations(), input)) {
+    LOGS_DEFAULT(VERBOSE) << "Clip Node [" << node.Name() << "] fused";
+    model_builder.RegisterOperand(output, operand_indices.at(input), output_operand_type, output_is_nhwc);
+    return Status::OK();
+  }
+
+  float min, max;
+  GetClipMinMax(model_builder, node, min, max);
 
   int32_t op_code;
   if (min == 0.0f && max == 6.0f)
@@ -2873,11 +2862,7 @@ Status ResizeOpBuilder::AddToModelBuilderImpl(ModelBuilder& model_builder, const
   } else {
     output_is_nhwc = true;
     if (!input_is_nhwc) {
-      const auto& nchw_input = input_defs[0]->Name();
-      if (!model_builder.GetNHWCOperand(nchw_input, input)) {
-        input = model_builder.GetUniqueName(nchw_input + "_nchw_to_nhwc");
-        ORT_RETURN_IF_ERROR(TransposeNCHWToNHWC(model_builder, nchw_input, input));
-      }
+      ORT_RETURN_IF_ERROR(GetNHWCInput(model_builder, node, 0, input));
     }
   }
 
