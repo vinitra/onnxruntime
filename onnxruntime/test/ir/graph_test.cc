@@ -1064,11 +1064,12 @@ TEST_F(GraphTest, UnusedInitializerIsIgnored) {
   ASSERT_TRUE(graph.GetAllInitializedTensors().empty());
 }
 
+template<typename T>
 static void CreateTensorProto(TensorProto& tensor_proto, const std::string& name,
                               const std::vector<int64_t>& shape,
-                              const std::vector<int64_t>& data) {
+                              const std::vector<T>& data) {
   tensor_proto.set_name(name);
-  tensor_proto.set_data_type(TensorProto_DataType_INT64);
+  tensor_proto.set_data_type(TypeToDataType<T>());
   auto* m_dims = tensor_proto.mutable_dims();
   m_dims->Resize(static_cast<int>(shape.size()), 0);
   std::copy(shape.cbegin(), shape.cend(), m_dims->begin());
@@ -1080,7 +1081,7 @@ static void CreateTensorProto(TensorProto& tensor_proto, const std::string& name
 
 static void CreateSparseTensorProto(const std::string& name,
                                     std::vector<int64_t> shape,
-                                    std::vector<int64_t> values,
+                                    std::vector<int32_t> values,
                                     std::vector<int64_t> indicies_shape,
                                     std::vector<int64_t> indicies,
                                     SparseTensorProto& sparse_proto) {
@@ -1115,7 +1116,7 @@ TEST_F(GraphTest, UnusedSparseInitializerIsIgnored) {
   auto model_proto = model.ToProto();
   // Add unused SparseInitializer
   auto* m_graph = model_proto.mutable_graph();
-  auto* m_sparse_initializer = m_graph->mutable_sparse_initializer()->Add();
+  auto* m_sparse_initializer = m_graph->add_sparse_initializer();
   CreateSparseTensorProto("unused_sparse_initializer", {100}, {13, 17, 19}, {3}, {9, 27, 81}, *m_sparse_initializer);
 
   std::string s1;
@@ -1124,6 +1125,7 @@ TEST_F(GraphTest, UnusedSparseInitializerIsIgnored) {
   ModelProto model_proto_1;
   const bool result = model_proto_1.ParseFromString(s1);
   ASSERT_TRUE(result) << "Failed to load model from serialized protobuf";
+  ASSERT_EQ(model_proto_1.graph().sparse_initializer_size(), 1);
 
   std::shared_ptr<onnxruntime::Model> p_tmp_model;
   auto x = onnxruntime::Model::Load(model_proto_1, p_tmp_model, nullptr, *logger_);
@@ -1600,6 +1602,61 @@ TEST_F(GraphTest, AddRemoveInitializerHandling) {
   auto num_initializers = graph_proto_from_resolved_graph.initializer_size();
   ASSERT_EQ(num_initializers, 0) << "Expected unused initializers to be removed from proto. "
                                  << num_initializers << " remain.";
+}
+
+TEST_F(GraphTest, SparseInitializerHandling) {
+  Model model("SparseInitializerHandling", false, *logger_);
+  auto& graph = model.MainGraph();
+
+  const std::vector<int64_t> shape = {100};
+  TypeProto tensor_int32;
+  tensor_int32.mutable_tensor_type()->set_elem_type(TensorProto_DataType_INT32);
+  tensor_int32.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(100);
+
+  const char* const input_initializer_name = "node_a_in_1";
+  auto& input_arg_a = graph.GetOrCreateNodeArg(input_initializer_name, &tensor_int32);
+  auto& output_arg_a = graph.GetOrCreateNodeArg("node_a_out_1", &tensor_int32);
+
+  std::vector<NodeArg*> inputs;
+  std::vector<NodeArg*> outputs;
+  inputs.push_back(&input_arg_a);
+  outputs.push_back(&output_arg_a);
+  graph.AddNode("a", "Identity_Fake", "a", inputs, outputs);
+  auto status = graph.Resolve();
+  EXPECT_TRUE(status.IsOK()) << status.ErrorMessage();
+
+  auto model_proto = model.ToProto();
+  auto* m_graph = model_proto.mutable_graph();
+  auto* m_sparse_initializer = m_graph->add_sparse_initializer();
+  // Name matches input of the node
+  CreateSparseTensorProto(input_initializer_name, shape, {13, 17, 19}, {3}, {9, 27, 81}, *m_sparse_initializer);
+
+  std::string s1;
+  model_proto.SerializeToString(&s1);
+
+  ModelProto model_proto_1;
+  const bool result = model_proto_1.ParseFromString(s1);
+  ASSERT_TRUE(result) << "Failed to load model from serialized protobuf";
+  ASSERT_EQ(model_proto_1.graph().sparse_initializer_size(), 1);
+  ASSERT_EQ(model_proto_1.graph().initializer_size(), 0);
+
+  std::shared_ptr<onnxruntime::Model> p_tmp_model;
+  auto x = onnxruntime::Model::Load(model_proto_1, p_tmp_model, nullptr, *logger_);
+
+  auto& graph2 = p_tmp_model->MainGraph();
+  status = graph2.Resolve();
+  EXPECT_TRUE(status.IsOK()) << status.ErrorMessage();
+  // Sparse initializer got converted to dense and appears on the list
+  ASSERT_EQ(graph2.GetAllInitializedTensors().size(), 1U);
+  ASSERT_EQ(graph2.GetAllInitializedTensors().cbegin()->first.compare(input_initializer_name), 0);
+
+  auto graph_proto = graph2.ToGraphProto();
+  // Got propagated to initializers list
+  ASSERT_EQ(graph_proto.initializer_size(), 1);
+  ASSERT_EQ(graph_proto.initializer().at(0).name().compare(input_initializer_name), 0);
+  // Still in the sparse_initializer
+  ASSERT_EQ(graph_proto.sparse_initializer_size(), 1);
+  ASSERT_EQ(graph_proto.sparse_initializer().at(0).values().name().compare(input_initializer_name), 0);
 }
 
 TEST_F(GraphTest, SetInputsAndSetOutputs_NewInputAndOutput) {
