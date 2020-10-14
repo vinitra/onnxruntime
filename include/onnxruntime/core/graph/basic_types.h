@@ -10,6 +10,7 @@
 namespace ONNX_NAMESPACE {
 class ValueInfoProto;
 class TensorProto;
+class SparseTensorProto;
 class TypeProto;
 class AttributeProto;
 // define types that would come from the ONNX library if we were building against it.
@@ -24,6 +25,7 @@ using NodeIndex = size_t;
 using Version = int64_t;
 using NodeArgInfo = ONNX_NAMESPACE::ValueInfoProto;
 using InitializedTensorSet = std::unordered_map<std::string, const ONNX_NAMESPACE::TensorProto*>;
+using InitializedSparseTensorSet = std::unordered_map<std::string, const ONNX_NAMESPACE::SparseTensorProto*>;
 using ArgNameToTypeMap = std::unordered_map<std::string, ONNX_NAMESPACE::TypeProto>;
 using ProviderType = const std::string&;
 // TODO - Evaluate switching the types below to support transparent comparators and enable

@@ -1137,7 +1137,7 @@ TEST_F(GraphTest, UnusedSparseInitializerIsIgnored) {
 
   // Because the initiailizer was unused, it was also removed from
   // sparse_initializer
-  auto graph_proto = graph2.ToGraphProto();
+  auto& graph_proto = graph2.ToGraphProto();
   ASSERT_TRUE(graph_proto.sparse_initializer().empty());
 }
 
@@ -1650,13 +1650,17 @@ TEST_F(GraphTest, SparseInitializerHandling) {
   ASSERT_EQ(graph2.GetAllInitializedTensors().size(), 1U);
   ASSERT_EQ(graph2.GetAllInitializedTensors().cbegin()->first.compare(input_initializer_name), 0);
 
-  auto graph_proto = graph2.ToGraphProto();
+  auto& graph_proto = graph2.ToGraphProto();
   // Got propagated to initializers list
   ASSERT_EQ(graph_proto.initializer_size(), 1);
   ASSERT_EQ(graph_proto.initializer().at(0).name().compare(input_initializer_name), 0);
   // Still in the sparse_initializer
   ASSERT_EQ(graph_proto.sparse_initializer_size(), 1);
   ASSERT_EQ(graph_proto.sparse_initializer().at(0).values().name().compare(input_initializer_name), 0);
+
+  // TODO: Adjust Model::ToProto to filter sparse out of initializer list
+  // serialize/deserializer ModelProto and check that no duplicates among the
+  // serializers.
 }
 
 TEST_F(GraphTest, SetInputsAndSetOutputs_NewInputAndOutput) {

@@ -240,7 +240,11 @@ const Graph& Model::MainGraph() const noexcept {
 
 #if !defined(ORT_MINIMAL_BUILD)
 ModelProto Model::ToProto() {
-  *(model_proto_.mutable_graph()) = graph_->ToGraphProto();
+  // We want to invoke const overload of ToGraphProto()
+  // that returns by value and, therefore, allows us to filter
+  // out dense duplicates of sparse initialiers.
+  const auto& graph = *graph_;
+  *(model_proto_.mutable_graph()) = graph.ToGraphProto();
   return model_proto_;
 }
 
