@@ -190,6 +190,19 @@ void ModelBuilder::PreprocessInitializers() {
   }
 }
 
+void ModelBuilder::PreprocessActivations() {
+  const auto& node_indices = graph_viewer_.GetNodesInTopologicalOrder();
+  for (size_t i = 0; i < node_indices.size(); i++) {
+    const auto* node(graph_viewer_.GetNode(node_indices[i]));
+    const auto& op_type(node->OpType());
+
+    if (op_type == "Relu") {
+      activation_nodes_.emplace(node->Index(), ANEURALNETWORKS_FUSED_RELU);
+    } else if (op_type == "Clip") {
+    }
+  }
+}
+
 // Help to get all quantized operators' input and the node(s) using the input
 std::unordered_map<std::string, vector<const Node*>> GetAllQuantizedOpInputs(const GraphViewer& graph_viewer) {
   std::unordered_map<std::string, vector<const Node*>> all_quantized_op_inputs;

@@ -132,6 +132,9 @@ class ModelBuilder {
   std::unordered_map<std::string, const ONNX_NAMESPACE::TensorProto&> initializers_;
   std::unordered_set<std::string> skipped_initializers_;
 
+  // All activation nodes (Relu, Relu1, Relu6) as a map <NodeIndex, activeation_code>
+  std::unordered_map<NodeIndex, int32_t> activation_nodes_;
+
   std::unordered_map<std::string, std::shared_ptr<IOpBuilder>> op_builders_;
 
   // Operands in nhwc
@@ -159,6 +162,7 @@ class ModelBuilder {
   Status GetTargetDevices() ORT_MUST_USE_RESULT;
   void GetAllInitializers();
   void PreprocessInitializers();
+  void PreprocessActivations();
   Status RegisterInitializers() ORT_MUST_USE_RESULT;
   Status RegisterModelInputs() ORT_MUST_USE_RESULT;
   Status AddOperations() ORT_MUST_USE_RESULT;
